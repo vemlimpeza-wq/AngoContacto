@@ -12,6 +12,7 @@ export interface Company {
   description: string;
   sector: string;
   province: string;
+  category?: string;
 }
 
 export interface SavedSearch {
@@ -21,6 +22,7 @@ export interface SavedSearch {
   province?: string;
   sector?: string;
   timestamp: number;
+  lastAccessed?: number;
 }
 
 export interface AppNotification {
@@ -30,4 +32,41 @@ export interface AppNotification {
   type: 'info' | 'warning' | 'success';
   read: boolean;
   timestamp: number;
+  searchId?: string;
+}
+
+export interface UserProfile {
+  senderName: string;
+  senderCompany: string;
+  senderWebsite?: string;
+  objective: string;
+  primaryColor?: string;
+  secondaryColor?: string;
+}
+
+export interface EmailCampaign {
+  id: string;
+  companyId: string;
+  companyName: string;
+  targetEmail: string;
+  subject: string;
+  body: string;
+  status: 'sent' | 'scheduled' | 'failed';
+  type: string;
+  tone: string;
+  scheduledDate?: number;
+  sentDate?: number;
+  sequenceIndex?: number;
+  sequenceTotal?: number;
+  opened?: boolean;
+  openCount?: number;
+}
+
+export interface CompanyCampaignGroup {
+  companyId: string;
+  companyName: string;
+  targetEmail: string;
+  campaigns: EmailCampaign[];
+  latestActivity: number;
+  status: 'active' | 'completed' | 'pending';
 }

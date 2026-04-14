@@ -17,7 +17,17 @@ export class ExportService {
   }
 
   private sortCompanies(companies: Company[]): Company[] {
-    return [...companies].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    return [...companies].sort((a, b) => {
+      const provA = (a.province || 'Desconhecida').toLowerCase();
+      const provB = (b.province || 'Desconhecida').toLowerCase();
+      if (provA !== provB) return provA.localeCompare(provB);
+
+      const catA = (a.category || 'Geral').toLowerCase();
+      const catB = (b.category || 'Geral').toLowerCase();
+      if (catA !== catB) return catA.localeCompare(catB);
+
+      return (a.name || '').localeCompare(b.name || '');
+    });
   }
 
   private generateExtId(index: number): string {
@@ -30,7 +40,7 @@ export class ExportService {
     const maxEmails = Math.max(...sortedCompanies.map(c => c.emails?.length || 0), 1);
     const emailHeaders = this.getEmailHeaders(maxEmails);
     
-    const headers = ['EXT_ID', 'Nome', ...emailHeaders, 'Telefone Fixo', 'Telemóvel', 'Endereço', 'Google Maps', 'Website', 'Setor', 'Província', 'Descrição'];
+    const headers = ['EXT_ID', 'Tipo de Pesquisa', 'Nome', ...emailHeaders, 'Telefone Fixo', 'Telemóvel', 'Endereço', 'Google Maps', 'Website', 'Setor', 'Província', 'Descrição'];
     csvRows.push(headers.join(','));
 
     sortedCompanies.forEach((company, index) => {
@@ -41,6 +51,7 @@ export class ExportService {
 
       const row = [
         this.escapeCSV(this.generateExtId(index)),
+        this.escapeCSV(company.category || 'Geral'),
         this.escapeCSV(company.name),
         ...emailValues,
         this.escapeCSV(company.landlinePhone || ''),
@@ -73,8 +84,9 @@ export class ExportService {
     const emailHeaders = this.getEmailHeaders(maxEmails);
 
     const data = sortedCompanies.map((c, index) => {
-      const row: any = {
+      const row: Record<string, string> = {
         EXT_ID: this.generateExtId(index),
+        'Tipo de Pesquisa': c.category || 'Geral',
         Nome: c.name,
       };
       
@@ -102,27 +114,69 @@ export class ExportService {
 
   exportToPDF(companies: Company[], filename = 'angocontacts_export.pdf') {
     const sortedCompanies = this.sortCompanies(companies);
-    const doc = new jsPDF();
+    const doc = new jsPDF('l'); // Landscape orientation
     
     doc.setFontSize(18);
     doc.text('AngoContacts Pro - Exportação de Contactos', 14, 22);
     
-    const tableData = sortedCompanies.map((c, index) => [
-      this.generateExtId(index),
-      c.name,
-      c.emails.join('\n'),
-      `${c.landlinePhone || ''}\n${c.mobilePhone || ''}`.trim(),
-      c.address,
-      c.sector
-    ]);
+    const groupedByProvince = sortedCompanies.reduce((acc, company, index) => {
+      const prov = company.province || 'Desconhecida';
+      if (!acc[prov]) acc[prov] = [];
+      acc[prov].push({ company, extId: this.generateExtId(index) });
+      return acc;
+    }, {} as Record<string, { company: Company, extId: string }[]>);
 
-    autoTable(doc, {
-      startY: 30,
-      head: [['EXT_ID', 'Nome', 'Emails', 'Telefones', 'Endereço', 'Setor']],
-      body: tableData,
-      theme: 'grid',
-      styles: { fontSize: 8, cellPadding: 2 },
-      headStyles: { fillColor: [15, 23, 42] } // Slate 900
+    let currentY = 30;
+    const pageHeight = doc.internal.pageSize.height || 210;
+
+    Object.keys(groupedByProvince).forEach((province) => {
+      if (currentY > pageHeight - 30) {
+        doc.addPage();
+        currentY = 20;
+      }
+
+      const provData = groupedByProvince[province];
+
+      doc.setFontSize(14);
+      doc.setTextColor(15, 23, 42);
+      doc.text(`Província: ${province}`, 14, currentY);
+      currentY += 6;
+
+      const tableData = provData.map(({ company: c, extId }) => {
+        const phones = [c.landlinePhone, c.mobilePhone].filter(p => !!p).join('\n');
+        const emails = (c.emails || []).filter(e => !!e).join('\n');
+        return [
+          extId,
+          c.category || 'Geral',
+          c.name,
+          emails,
+          phones,
+          c.address,
+          c.sector,
+          c.description || ''
+        ];
+      });
+
+      autoTable(doc, {
+        startY: currentY,
+        head: [['ID', 'Pesquisa', 'Nome', 'Emails', 'Telefones', 'Endereço', 'Setor', 'Descrição']],
+        body: tableData,
+        theme: 'grid',
+        styles: { fontSize: 7, cellPadding: 2, overflow: 'linebreak' },
+        columnStyles: {
+          0: { cellWidth: 12 },
+          1: { cellWidth: 22 },
+          2: { cellWidth: 35 },
+          3: { cellWidth: 35 },
+          4: { cellWidth: 25 },
+          5: { cellWidth: 35 },
+          6: { cellWidth: 22 },
+          7: { cellWidth: 'auto' }
+        },
+        headStyles: { fillColor: [15, 23, 42] }
+      });
+
+      currentY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10;
     });
 
     doc.save(filename);

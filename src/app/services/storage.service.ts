@@ -1,6 +1,6 @@
 import { Injectable, signal, PLATFORM_ID, inject, computed } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
-import { Company, SavedSearch, AppNotification } from '../models/company.model';
+import { Company, SavedSearch, AppNotification, UserProfile, EmailCampaign } from '../models/company.model';
 
 @Injectable({ providedIn: 'root' })
 export class StorageService {
@@ -8,11 +8,15 @@ export class StorageService {
   private readonly HISTORY_KEY = 'angocontacts_search_history';
   private readonly SAVED_SEARCHES_KEY = 'angocontacts_saved_searches';
   private readonly NOTIFICATIONS_KEY = 'angocontacts_notifications';
+  private readonly USER_PROFILE_KEY = 'angocontacts_user_profile';
+  private readonly CAMPAIGNS_KEY = 'angocontacts_email_campaigns';
   
   savedCompanies = signal<Company[]>([]);
   searchHistory = signal<Company[]>([]);
   savedSearches = signal<SavedSearch[]>([]);
   notifications = signal<AppNotification[]>([]);
+  userProfile = signal<UserProfile>({ senderName: '', senderCompany: '', objective: '' });
+  campaigns = signal<EmailCampaign[]>([]);
   
   unreadNotificationsCount = computed(() => this.notifications().filter(n => !n.read).length);
 
@@ -70,6 +74,53 @@ export class StorageService {
         console.error('Failed to load notifications', e);
       }
     }
+
+    const profileData = localStorage.getItem(this.USER_PROFILE_KEY);
+    if (profileData) {
+      try {
+        this.userProfile.set(JSON.parse(profileData));
+      } catch (e) {
+        console.error('Failed to load user profile', e);
+      }
+    }
+
+    const campaignsData = localStorage.getItem(this.CAMPAIGNS_KEY);
+    if (campaignsData) {
+      try {
+        this.campaigns.set(JSON.parse(campaignsData));
+      } catch (e) {
+        console.error('Failed to load campaigns', e);
+      }
+    }
+
+    this.checkOutdatedSearches();
+  }
+
+  private checkOutdatedSearches() {
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+
+    this.savedSearches.update(searches => {
+      return searches.map(search => {
+        const lastAccessed = search.lastAccessed || search.timestamp;
+        if (now - lastAccessed > THIRTY_DAYS_MS) {
+          // Check if we already notified for this search recently to avoid spam
+          const notifKey = `notified_${search.id}`;
+          const lastNotified = localStorage.getItem(notifKey);
+          
+          if (!lastNotified || (now - parseInt(lastNotified, 10) > THIRTY_DAYS_MS)) {
+            this.addNotification(
+              'Pesquisa Desatualizada',
+              `A sua pesquisa por "${search.query}" não é atualizada há mais de 30 dias. Sugerimos que a refaça para obter novos resultados.`,
+              'warning',
+              search.id
+            );
+            localStorage.setItem(notifKey, now.toString());
+          }
+        }
+        return search;
+      });
+    });
   }
 
   private normalizeName(name: string): string {
@@ -110,7 +161,7 @@ export class StorageService {
 
       let newMobile = company.mobilePhone?.trim();
       if (newMobile) {
-        const normalizedMobile = newMobile.replace(/[\s\-\(\)]+/g, '');
+        const normalizedMobile = newMobile.replace(/[\s\-()]+/g, '');
         if (seenPhones.has(normalizedMobile)) {
           newMobile = undefined;
           removedCount++;
@@ -122,7 +173,7 @@ export class StorageService {
 
       let newLandline = company.landlinePhone?.trim();
       if (newLandline) {
-        const normalizedLandline = newLandline.replace(/[\s\-\(\)]+/g, '');
+        const normalizedLandline = newLandline.replace(/[\s\-()]+/g, '');
         if (seenPhones.has(normalizedLandline)) {
           newLandline = undefined;
           removedCount++;
@@ -176,14 +227,15 @@ export class StorageService {
     localStorage.setItem(this.NOTIFICATIONS_KEY, JSON.stringify(this.notifications()));
   }
 
-  addNotification(title: string, message: string, type: 'info' | 'warning' | 'success' = 'info') {
+  addNotification(title: string, message: string, type: 'info' | 'warning' | 'success' = 'info', searchId?: string) {
     const newNotif: AppNotification = {
       id: crypto.randomUUID(),
       title,
       message,
       type,
       read: false,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      searchId
     };
     this.notifications.update(list => [newNotif, ...list]);
     this.saveNotifications();
@@ -249,14 +301,59 @@ export class StorageService {
     const newSearch: SavedSearch = {
       ...search,
       id: crypto.randomUUID(),
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      lastAccessed: Date.now()
     };
     this.savedSearches.update(list => [newSearch, ...list]);
+    this.saveSearches();
+  }
+
+  updateSavedSearchAccess(searchId: string) {
+    this.savedSearches.update(list => list.map(s => 
+      s.id === searchId ? { ...s, lastAccessed: Date.now() } : s
+    ));
     this.saveSearches();
   }
 
   removeSavedSearch(searchId: string) {
     this.savedSearches.update(list => list.filter(s => s.id !== searchId));
     this.saveSearches();
+  }
+
+  saveUserProfile(profile: UserProfile) {
+    this.userProfile.set(profile);
+    if (isPlatformBrowser(this.platformId)) {
+      localStorage.setItem(this.USER_PROFILE_KEY, JSON.stringify(profile));
+    }
+  }
+
+  addCampaign(campaign: EmailCampaign) {
+    this.campaigns.update(list => [campaign, ...list]);
+    this.saveCampaigns();
+  }
+
+  updateCampaignStatus(id: string, status: 'sent' | 'scheduled' | 'failed', dateField?: 'sentDate' | 'scheduledDate', dateValue?: number) {
+    this.campaigns.update(list => list.map(c => {
+      if (c.id === id) {
+        const updated = { ...c, status };
+        if (dateField && dateValue) {
+          updated[dateField] = dateValue;
+        }
+        return updated;
+      }
+      return c;
+    }));
+    this.saveCampaigns();
+  }
+
+  removeCampaign(id: string) {
+    this.campaigns.update(list => list.filter(c => c.id !== id));
+    this.saveCampaigns();
+  }
+
+  private saveCampaigns() {
+    if (isPlatformBrowser(this.platformId)) {
+      localStorage.setItem(this.CAMPAIGNS_KEY, JSON.stringify(this.campaigns()));
+    }
   }
 }
