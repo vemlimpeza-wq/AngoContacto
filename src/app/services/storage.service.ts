@@ -1,6 +1,6 @@
 import { Injectable, signal, PLATFORM_ID, inject, computed } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
-import { Company, SavedSearch, AppNotification, UserProfile, EmailCampaign } from '../models/company.model';
+import { Company, SavedSearch, AppNotification, UserProfile, EmailCampaign, EmailSettings, AutomationWorkflow, EmailTemplate, ContactList } from '../models/company.model';
 
 @Injectable({ providedIn: 'root' })
 export class StorageService {
@@ -10,6 +10,10 @@ export class StorageService {
   private readonly NOTIFICATIONS_KEY = 'angocontacts_notifications';
   private readonly USER_PROFILE_KEY = 'angocontacts_user_profile';
   private readonly CAMPAIGNS_KEY = 'angocontacts_email_campaigns';
+  private readonly EMAIL_SETTINGS_KEY = 'angocontacts_email_settings';
+  private readonly AUTOMATIONS_KEY = 'angocontacts_automations';
+  private readonly TEMPLATES_KEY = 'angocontacts_email_templates';
+  private readonly CONTACT_LISTS_KEY = 'angocontacts_contact_lists';
   
   savedCompanies = signal<Company[]>([]);
   searchHistory = signal<Company[]>([]);
@@ -17,8 +21,33 @@ export class StorageService {
   notifications = signal<AppNotification[]>([]);
   userProfile = signal<UserProfile>({ senderName: '', senderCompany: '', objective: '' });
   campaigns = signal<EmailCampaign[]>([]);
+  emailSettings = signal<EmailSettings | null>(null);
+  automations = signal<AutomationWorkflow[]>([]);
+  emailTemplates = signal<EmailTemplate[]>([]);
+  contactLists = signal<ContactList[]>([]);
   
+  activeTab = signal<'dashboard' | 'search' | 'saved' | 'history' | 'saved-searches' | 'campaigns' | 'automation' | 'reports' | 'settings' | 'templates'>('dashboard');
+
   unreadNotificationsCount = computed(() => this.notifications().filter(n => !n.read).length);
+  
+  activeToast = signal<{id: string, title: string, message: string, type: 'info' | 'success' | 'warning' | 'error'} | null>(null);
+
+  showToast(title: string, message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') {
+    const id = crypto.randomUUID();
+    this.activeToast.set({ id, title, message, type });
+    // Duration based on message length, minimum 3.5s
+    const duration = Math.max(3500, message.length * 80);
+    setTimeout(() => {
+      this.dismissToast(id);
+    }, duration);
+  }
+
+  dismissToast(id: string) {
+    const current = this.activeToast();
+    if (current && current.id === id) {
+      this.activeToast.set(null);
+    }
+  }
 
   private platformId = inject(PLATFORM_ID);
 
@@ -31,69 +60,75 @@ export class StorageService {
   private load() {
     if (!isPlatformBrowser(this.platformId)) return;
     
-    const savedData = localStorage.getItem(this.STORAGE_KEY);
-    if (savedData) {
+    this.loadItem<Company[]>(this.STORAGE_KEY, (data) => {
+      const unique = this.removeDuplicates(data);
+      const { cleaned } = this.sanitizeContactsList(unique);
+      this.savedCompanies.set(cleaned);
+      this.save();
+    });
+
+    this.loadItem<Company[]>(this.HISTORY_KEY, (data) => {
+      const unique = this.removeDuplicates(data);
+      const { cleaned } = this.sanitizeContactsList(unique);
+      this.searchHistory.set(cleaned);
+      this.saveHistory();
+    });
+
+    this.loadItem<SavedSearch[]>(this.SAVED_SEARCHES_KEY, (data) => this.savedSearches.set(data));
+    this.loadItem<AppNotification[]>(this.NOTIFICATIONS_KEY, (data) => this.notifications.set(data));
+    this.loadItem<UserProfile>(this.USER_PROFILE_KEY, (data) => this.userProfile.set(data));
+    this.loadItem<EmailCampaign[]>(this.CAMPAIGNS_KEY, (data) => this.campaigns.set(data));
+    this.loadItem<EmailSettings | null>(this.EMAIL_SETTINGS_KEY, (data) => this.emailSettings.set(data));
+    this.loadItem<AutomationWorkflow[]>(this.AUTOMATIONS_KEY, (data) => this.automations.set(data));
+    
+    const templatesData = localStorage.getItem(this.TEMPLATES_KEY);
+    if (templatesData) {
       try {
-        const parsed = JSON.parse(savedData);
-        const uniqueCompanies = this.removeDuplicates(parsed);
-        const { cleaned } = this.sanitizeContactsList(uniqueCompanies);
-        this.savedCompanies.set(cleaned);
-        this.save(); // Save back cleaned data
+        this.emailTemplates.set(JSON.parse(templatesData));
       } catch (e) {
-        console.error('Failed to load saved companies', e);
+        console.error('Failed to load email templates', e);
       }
+    } else {
+      this.setInitialTemplates();
     }
 
-    const historyData = localStorage.getItem(this.HISTORY_KEY);
-    if (historyData) {
-      try {
-        const parsed = JSON.parse(historyData);
-        const uniqueCompanies = this.removeDuplicates(parsed);
-        const { cleaned } = this.sanitizeContactsList(uniqueCompanies);
-        this.searchHistory.set(cleaned);
-        this.saveHistory(); // Save back cleaned data
-      } catch (e) {
-        console.error('Failed to load search history', e);
-      }
-    }
-
-    const savedSearchesData = localStorage.getItem(this.SAVED_SEARCHES_KEY);
-    if (savedSearchesData) {
-      try {
-        this.savedSearches.set(JSON.parse(savedSearchesData));
-      } catch (e) {
-        console.error('Failed to load saved searches', e);
-      }
-    }
-
-    const notifData = localStorage.getItem(this.NOTIFICATIONS_KEY);
-    if (notifData) {
-      try {
-        this.notifications.set(JSON.parse(notifData));
-      } catch (e) {
-        console.error('Failed to load notifications', e);
-      }
-    }
-
-    const profileData = localStorage.getItem(this.USER_PROFILE_KEY);
-    if (profileData) {
-      try {
-        this.userProfile.set(JSON.parse(profileData));
-      } catch (e) {
-        console.error('Failed to load user profile', e);
-      }
-    }
-
-    const campaignsData = localStorage.getItem(this.CAMPAIGNS_KEY);
-    if (campaignsData) {
-      try {
-        this.campaigns.set(JSON.parse(campaignsData));
-      } catch (e) {
-        console.error('Failed to load campaigns', e);
-      }
-    }
+    this.loadItem<ContactList[]>(this.CONTACT_LISTS_KEY, (data) => this.contactLists.set(data));
 
     this.checkOutdatedSearches();
+  }
+
+  private loadItem<T>(key: string, setter: (data: T) => void) {
+    const data = localStorage.getItem(key);
+    if (data) {
+      try {
+        setter(JSON.parse(data));
+      } catch (e) {
+        console.error(`Failed to load ${key}`, e);
+      }
+    }
+  }
+
+  private setInitialTemplates() {
+    const defaults: EmailTemplate[] = [
+      {
+        id: 'tmpl-intro',
+        name: 'Apresentação Comercial',
+        subject: 'Proposta de Colaboração para {{name}}',
+        body: 'Olá equipa da {{name}},\n\nTenho acompanhado o vosso crescimento no setor de {{sector}} e acredito que existe uma excelente oportunidade de sinergia entre as nossas empresas.\n\nGostaria de saber se teriam 10 minutos para uma breve chamada esta semana?\n\nMelhores cumprimentos,\n{{senderName}}',
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      },
+      {
+        id: 'tmpl-followup',
+        name: 'Follow-up (Lead Fria)',
+        subject: 'Ainda interessados na {{senderCompany}}?',
+        body: 'Olá,\n\nNotei que ainda não tivemos oportunidade de conversar sobre a proposta que enviei anteriormente.\n\nAcredito que as nossas ferramentas podem ser um diferencial para a {{name}} em {{province}}.\n\nAguardo o vosso contacto,\n{{senderName}}',
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      }
+    ];
+    this.emailTemplates.set(defaults);
+    this.saveTemplates();
   }
 
   private checkOutdatedSearches() {
@@ -113,7 +148,9 @@ export class StorageService {
               'Pesquisa Desatualizada',
               `A sua pesquisa por "${search.query}" não é atualizada há mais de 30 dias. Sugerimos que a refaça para obter novos resultados.`,
               'warning',
-              search.id
+              'medium',
+              search.id,
+              { label: 'Ver Pesquisas', tab: 'saved-searches' }
             );
             localStorage.setItem(notifKey, now.toString());
           }
@@ -227,18 +264,41 @@ export class StorageService {
     localStorage.setItem(this.NOTIFICATIONS_KEY, JSON.stringify(this.notifications()));
   }
 
-  addNotification(title: string, message: string, type: 'info' | 'warning' | 'success' = 'info', searchId?: string) {
+  saveAutomations(automations: AutomationWorkflow[]) {
+    this.automations.set(automations);
+    if (!isPlatformBrowser(this.platformId)) return;
+    localStorage.setItem(this.AUTOMATIONS_KEY, JSON.stringify(this.automations()));
+  }
+
+  addNotification(
+    title: string, 
+    message: string, 
+    type: 'info' | 'warning' | 'success' | 'error' = 'info', 
+    urgency: 'low' | 'medium' | 'high' = 'low',
+    searchId?: string,
+    action?: { label: string; tab?: 'search' | 'saved' | 'history' | 'saved-searches' | 'campaigns'; link?: string }
+  ) {
     const newNotif: AppNotification = {
       id: crypto.randomUUID(),
       title,
       message,
       type,
+      urgency,
       read: false,
       timestamp: Date.now(),
-      searchId
+      searchId,
+      action
     };
-    this.notifications.update(list => [newNotif, ...list]);
+    this.notifications.update(list => {
+      const newList = [newNotif, ...list];
+      return newList.slice(0, 50); // Keep only last 50 notifications
+    });
     this.saveNotifications();
+
+    // Automatically show toast for significant notifications
+    if (type !== 'info' || urgency === 'high') {
+      this.showToast(title, message, type);
+    }
   }
 
   markNotificationAsRead(id: string) {
@@ -267,6 +327,11 @@ export class StorageService {
 
   removeCompany(companyId: string) {
     this.savedCompanies.update(list => list.filter(c => c.id !== companyId));
+    this.save();
+  }
+
+  saveCompanies(companies: Company[]) {
+    this.savedCompanies.set(companies);
     this.save();
   }
 
@@ -351,9 +416,117 @@ export class StorageService {
     this.saveCampaigns();
   }
 
+  trackCampaignInteraction(id: string, type: 'opened' | 'clicked') {
+    this.campaigns.update(list => list.map(c => {
+      if (c.id === id) {
+        if (type === 'opened') {
+          return { ...c, opened: true, openCount: (c.openCount || 0) + 1 };
+        } else {
+          return { ...c, clicked: true, clickCount: (c.clickCount || 0) + 1 };
+        }
+      }
+      return c;
+    }));
+    this.saveCampaigns();
+  }
+
   private saveCampaigns() {
     if (isPlatformBrowser(this.platformId)) {
       localStorage.setItem(this.CAMPAIGNS_KEY, JSON.stringify(this.campaigns()));
     }
+  }
+
+  saveEmailSettings(settings: EmailSettings) {
+    this.emailSettings.set(settings);
+    if (isPlatformBrowser(this.platformId)) {
+      localStorage.setItem(this.EMAIL_SETTINGS_KEY, JSON.stringify(settings));
+    }
+  }
+
+  saveTemplate(template: Omit<EmailTemplate, 'id' | 'createdAt' | 'updatedAt'>, id?: string) {
+    const now = Date.now();
+    if (id) {
+      this.emailTemplates.update(list => list.map(t => 
+        t.id === id ? { ...t, ...template, updatedAt: now } : t
+      ));
+    } else {
+      const newTemplate: EmailTemplate = {
+        ...template,
+        id: crypto.randomUUID(),
+        createdAt: now,
+        updatedAt: now
+      };
+      this.emailTemplates.update(list => [newTemplate, ...list]);
+    }
+    this.saveTemplates();
+  }
+
+  deleteTemplate(id: string) {
+    this.emailTemplates.update(list => list.filter(t => t.id !== id));
+    this.saveTemplates();
+  }
+
+  private saveTemplates() {
+    if (isPlatformBrowser(this.platformId)) {
+      localStorage.setItem(this.TEMPLATES_KEY, JSON.stringify(this.emailTemplates()));
+    }
+  }
+
+  // --- Contact Lists Management ---
+  saveContactList(name: string, description: string, companyIds: string[] = []) {
+    const newList: ContactList = {
+      id: crypto.randomUUID(),
+      name,
+      description,
+      companyIds,
+      createdAt: Date.now()
+    };
+    this.contactLists.update(lists => [...lists, newList]);
+    this.persistContactLists();
+    return newList.id;
+  }
+
+  updateContactList(id: string, partial: Partial<ContactList>) {
+    this.contactLists.update(lists => lists.map(l => l.id === id ? { ...l, ...partial } : l));
+    this.persistContactLists();
+  }
+
+  deleteContactList(id: string) {
+    this.contactLists.update(lists => lists.filter(l => l.id !== id));
+    this.persistContactLists();
+  }
+
+  addCompanyToList(listId: string, companyId: string) {
+    this.contactLists.update(lists => lists.map(l => {
+      if (l.id === listId && !l.companyIds.includes(companyId)) {
+        return { ...l, companyIds: [...l.companyIds, companyId] };
+      }
+      return l;
+    }));
+    this.persistContactLists();
+  }
+
+  removeCompanyFromList(listId: string, companyId: string) {
+    this.contactLists.update(lists => lists.map(l => {
+      if (l.id === listId) {
+        return { ...l, companyIds: l.companyIds.filter(id => id !== companyId) };
+      }
+      return l;
+    }));
+    this.persistContactLists();
+  }
+
+  private persistContactLists() {
+    if (isPlatformBrowser(this.platformId)) {
+      const data = JSON.stringify(this.contactLists());
+      localStorage.setItem(this.CONTACT_LISTS_KEY, data);
+      // Create a specific backup key as well
+      localStorage.setItem('angocontacts_contact_lists_backup', data);
+    }
+  }
+
+  saveContactLists(lists: ContactList[]) {
+    this.contactLists.set(lists);
+    this.persistContactLists();
   }
 }
