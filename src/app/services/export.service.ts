@@ -34,7 +34,7 @@ export class ExportService {
     return String(index + 1).padStart(4, '0');
   }
 
-  exportToCSV(companies: Company[], filename = 'angocontacts_export.csv') {
+  async exportToCSV(companies: Company[], filename = 'angocontacts_export.csv') {
     const sortedCompanies = this.sortCompanies(companies);
     const csvRows = [];
     const maxEmails = Math.max(...sortedCompanies.map(c => c.emails?.length || 0), 1);
@@ -43,28 +43,36 @@ export class ExportService {
     const headers = ['EXT_ID', 'Tipo de Pesquisa', 'Nome', ...emailHeaders, 'Telefone Fixo', 'Telemóvel', 'Endereço', 'Google Maps', 'Website', 'Setor', 'Província', 'Descrição'];
     csvRows.push(headers.join(','));
 
-    sortedCompanies.forEach((company, index) => {
-      const emailValues = [];
-      for (let i = 0; i < maxEmails; i++) {
-        emailValues.push(this.escapeCSV(company.emails?.[i] || ''));
-      }
+    // Process in chunks to avoid blocking UI
+    const chunkSize = 200;
+    for (let i = 0; i < sortedCompanies.length; i += chunkSize) {
+      const chunk = sortedCompanies.slice(i, i + chunkSize);
+      chunk.forEach((company, index) => {
+        const actualIndex = i + index;
+        const emailValues = [];
+        for (let j = 0; j < maxEmails; j++) {
+          emailValues.push(this.escapeCSV(company.emails?.[j] || ''));
+        }
 
-      const row = [
-        this.escapeCSV(this.generateExtId(index)),
-        this.escapeCSV(company.category || 'Geral'),
-        this.escapeCSV(company.name),
-        ...emailValues,
-        this.escapeCSV(company.landlinePhone || ''),
-        this.escapeCSV(company.mobilePhone || ''),
-        this.escapeCSV(company.address),
-        this.escapeCSV(company.googleMapsLink || ''),
-        this.escapeCSV(company.website || ''),
-        this.escapeCSV(company.sector),
-        this.escapeCSV(company.province),
-        this.escapeCSV(company.description)
-      ];
-      csvRows.push(row.join(','));
-    });
+        const row = [
+          this.escapeCSV(this.generateExtId(actualIndex)),
+          this.escapeCSV(company.category || 'Geral'),
+          this.escapeCSV(company.name),
+          ...emailValues,
+          this.escapeCSV(company.landlinePhone || ''),
+          this.escapeCSV(company.mobilePhone || ''),
+          this.escapeCSV(company.address),
+          this.escapeCSV(company.googleMapsLink || ''),
+          this.escapeCSV(company.website || ''),
+          this.escapeCSV(company.sector),
+          this.escapeCSV(company.province),
+          this.escapeCSV(company.description)
+        ];
+        csvRows.push(row.join(','));
+      });
+      // Yield to UI
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
 
     const csvContent = csvRows.join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -78,33 +86,42 @@ export class ExportService {
     document.body.removeChild(link);
   }
 
-  exportToExcel(companies: Company[], filename = 'angocontacts_export.xlsx') {
+  async exportToExcel(companies: Company[], filename = 'angocontacts_export.xlsx') {
     const sortedCompanies = this.sortCompanies(companies);
     const maxEmails = Math.max(...sortedCompanies.map(c => c.emails?.length || 0), 1);
     const emailHeaders = this.getEmailHeaders(maxEmails);
 
-    const data = sortedCompanies.map((c, index) => {
-      const row: Record<string, string> = {
-        EXT_ID: this.generateExtId(index),
-        'Tipo de Pesquisa': c.category || 'Geral',
-        Nome: c.name,
-      };
-      
-      for (let i = 0; i < maxEmails; i++) {
-        row[emailHeaders[i]] = c.emails?.[i] || '';
-      }
+    const data: Record<string, string>[] = [];
+    
+    // Process in chunks
+    const chunkSize = 150;
+    for (let i = 0; i < sortedCompanies.length; i += chunkSize) {
+      const chunk = sortedCompanies.slice(i, i + chunkSize);
+      chunk.forEach((c, index) => {
+        const actualIndex = i + index;
+        const row: Record<string, string> = {
+          EXT_ID: this.generateExtId(actualIndex),
+          'Tipo de Pesquisa': c.category || 'Geral',
+          Nome: c.name,
+        };
+        
+        for (let j = 0; j < maxEmails; j++) {
+          row[emailHeaders[j]] = c.emails?.[j] || '';
+        }
 
-      row['Telefone Fixo'] = c.landlinePhone || '';
-      row['Telemóvel'] = c.mobilePhone || '';
-      row['Endereço'] = c.address;
-      row['Google Maps'] = c.googleMapsLink || '';
-      row['Website'] = c.website || '';
-      row['Setor'] = c.sector;
-      row['Província'] = c.province;
-      row['Descrição'] = c.description;
+        row['Telefone Fixo'] = c.landlinePhone || '';
+        row['Telemóvel'] = c.mobilePhone || '';
+        row['Endereço'] = c.address;
+        row['Google Maps'] = c.googleMapsLink || '';
+        row['Website'] = c.website || '';
+        row['Setor'] = c.sector;
+        row['Província'] = c.province;
+        row['Descrição'] = c.description;
 
-      return row;
-    });
+        data.push(row);
+      });
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
 
     const worksheet = XLSX.utils.json_to_sheet(data);
     const workbook = XLSX.utils.book_new();
@@ -112,7 +129,7 @@ export class ExportService {
     XLSX.writeFile(workbook, filename);
   }
 
-  exportToPDF(companies: Company[], filename = 'angocontacts_export.pdf') {
+  async exportToPDF(companies: Company[], filename = 'angocontacts_export.pdf') {
     const sortedCompanies = this.sortCompanies(companies);
     const doc = new jsPDF('l'); // Landscape orientation
     
@@ -127,9 +144,11 @@ export class ExportService {
     }, {} as Record<string, { company: Company, extId: string }[]>);
 
     let currentY = 30;
-    const pageHeight = doc.internal.pageSize.height || 210;
+    const pageHeight = (doc.internal.pageSize as unknown as { height: number }).height || 210;
 
-    Object.keys(groupedByProvince).forEach((province) => {
+    const provinces = Object.keys(groupedByProvince);
+    for (let i = 0; i < provinces.length; i++) {
+      const province = provinces[i];
       if (currentY > pageHeight - 30) {
         doc.addPage();
         currentY = 20;
@@ -177,7 +196,12 @@ export class ExportService {
       });
 
       currentY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10;
-    });
+      
+      // Yield to UI to prevent freezing
+      if (provData.length > 50 || i % 2 === 0) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+    }
 
     doc.save(filename);
   }

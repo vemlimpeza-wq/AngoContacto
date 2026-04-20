@@ -1,6 +1,6 @@
-import { Component, inject, ChangeDetectionStrategy, ViewChild, ElementRef } from '@angular/core';
+import { Component, inject, ChangeDetectionStrategy } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ReactiveFormsModule, FormsModule } from '@angular/forms';
+import { ReactiveFormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { DragDropModule } from '@angular/cdk/drag-drop';
 import { StorageService } from '../services/storage.service';
@@ -10,7 +10,7 @@ import { WorkflowNode } from '../models/company.model';
 @Component({
   selector: 'app-automation-panel',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, FormsModule, MatIconModule, DragDropModule],
+  imports: [CommonModule, ReactiveFormsModule, MatIconModule, DragDropModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="animate-in fade-in slide-in-from-bottom-4 duration-300 ease-out h-full w-full">
@@ -173,7 +173,7 @@ import { WorkflowNode } from '../models/company.model';
                       </div>
                       @if (state.status === 'completed' || state.status === 'failed') {
                         <button (click)="automationEngine.deleteAutomationState(state.workflowId, state.companyId, $event)" class="w-10 h-10 flex items-center justify-center rounded-xl text-slate-300 hover:text-rose-600 hover:bg-rose-50 transition-all border border-transparent hover:border-rose-100" title="Limpar Registo">
-                          <mat-icon class="text-[20px]">delete_sweep</mat-icon>
+                           <mat-icon class="text-[20px]">delete_sweep</mat-icon>
                         </button>
                       } @else {
                         <div class="w-10"></div>
@@ -265,13 +265,13 @@ import { WorkflowNode } from '../models/company.model';
                       </div>
                       
                       <div class="mt-4 pt-4 border-t border-white/10">
-                          <select [ngModel]="wf.trigger.type" (ngModelChange)="wf.trigger.type = $event; wf.updatedAt = Date.now()" class="w-full bg-white/10 border-0 text-xs font-bold rounded-lg px-3 py-2 outline-none appearance-none hover:bg-white/20 transition-colors">
+                          <select [value]="wf.trigger.type" (change)="wf.trigger.type = $any($event.target).value; wf.updatedAt = Date.now()" class="w-full bg-white/10 border-0 text-xs font-bold rounded-lg px-3 py-2 outline-none appearance-none hover:bg-white/20 transition-colors">
                             <option value="contact_added">Ao adicionar qualquer contacto</option>
                             <option value="list_joined">Ao entrar numa lista específica</option>
                           </select>
                           @if (wf.trigger.type === 'list_joined') {
                             <div class="mt-2">
-                               <select [ngModel]="wf.trigger.config?.listId" (ngModelChange)="wf.trigger.config = {listId: $event}; wf.updatedAt = Date.now()" class="w-full bg-white/20 border-0 text-xs font-bold rounded-lg px-3 py-2 outline-none">
+                               <select [value]="wf.trigger.config?.listId || ''" (change)="wf.trigger.config = {listId: $any($event.target).value}; wf.updatedAt = Date.now()" class="w-full bg-white/20 border-0 text-xs font-bold rounded-lg px-3 py-2 outline-none">
                                   <option value="">Selecione uma lista...</option>
                                   @for (list of storageService.contactLists(); track list.id) {
                                     <option [value]="list.id">{{ list.name }}</option>
@@ -385,12 +385,12 @@ import { WorkflowNode } from '../models/company.model';
                  @if (node.type === 'action_email') {
                    <div class="space-y-4">
                      <div>
-                       <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Assunto do Email</label>
-                       <input [(ngModel)]="node.config.subject" (ngModelChange)="wf.updatedAt = Date.now()" class="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#0A192F] focus:border-[#0A192F] outline-none text-sm font-medium" placeholder="Assunto...">
+                       <label for="wf-subject" class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Assunto do Email</label>
+                       <input id="wf-subject" [value]="node.config.subject || ''" (input)="node.config.subject = $any($event.target).value; wf.updatedAt = Date.now()" aria-required="true" class="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#0A192F] focus:border-[#0A192F] outline-none text-sm font-medium" placeholder="Assunto...">
                      </div>
                      <div>
-                       <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Conteúdo (HTML)</label>
-                       <textarea [(ngModel)]="node.config.body" (ngModelChange)="wf.updatedAt = Date.now()" rows="12" class="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#0A192F] focus:border-[#0A192F] outline-none text-xs font-mono leading-relaxed" placeholder="HTML aqui..."></textarea>
+                       <label for="wf-body" class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Conteúdo (HTML)</label>
+                       <textarea id="wf-body" [value]="node.config.body || ''" (input)="node.config.body = $any($event.target).value; wf.updatedAt = Date.now()" aria-describedby="wf-body-hint" rows="12" class="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#0A192F] focus:border-[#0A192F] outline-none text-xs font-mono leading-relaxed" placeholder="HTML aqui..."></textarea>
                        <p class="text-[10px] text-slate-400 mt-2 italic">Dica: Use {{ '{{name}}' }} para personalizar.</p>
                      </div>
                    </div>
@@ -400,12 +400,12 @@ import { WorkflowNode } from '../models/company.model';
                    <div class="space-y-4">
                      <div class="grid grid-cols-2 gap-3">
                         <div class="flex flex-col gap-2">
-                           <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest">Dias</label>
-                           <input type="number" [(ngModel)]="node.config.days" (ngModelChange)="wf.updatedAt = Date.now()" class="w-full px-3 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#0A192F] outline-none text-sm font-bold">
+                           <label for="delay-d" class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest">Dias</label>
+                           <input id="delay-d" type="number" [value]="node.config.days || 0" (input)="node.config.days = +$any($event.target).value; wf.updatedAt = Date.now()" aria-label="Dias de atraso" class="w-full px-3 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#0A192F] outline-none text-sm font-bold">
                         </div>
                         <div class="flex flex-col gap-2">
-                           <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest">Horas</label>
-                           <input type="number" [(ngModel)]="node.config.hours" (ngModelChange)="wf.updatedAt = Date.now()" class="w-full px-3 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#0A192F] outline-none text-sm font-bold">
+                           <label for="delay-h" class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest">Horas</label>
+                           <input id="delay-h" type="number" [value]="node.config.hours || 0" (input)="node.config.hours = +$any($event.target).value; wf.updatedAt = Date.now()" aria-label="Horas de atraso" class="w-full px-3 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#0A192F] outline-none text-sm font-bold">
                         </div>
                      </div>
                      <p class="text-[10px] text-slate-500 bg-blue-50 p-3 rounded-xl border border-blue-100 leading-relaxed italic">
@@ -417,11 +417,12 @@ import { WorkflowNode } from '../models/company.model';
                  @if (node.type.startsWith('condition')) {
                    <div class="space-y-4">
                       <div>
-                        <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Janela de Espera (Dias)</label>
-                        <input type="number" [(ngModel)]="node.config.windowDays" (ngModelChange)="wf.updatedAt = Date.now()" class="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#0A192F] outline-none text-sm font-bold">
+                        <label for="window-d" class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Janela de Espera (Dias)</label>
+                        <input id="window-d" type="number" [value]="node.config.windowDays || 3" (input)="node.config.windowDays = +$any($event.target).value; wf.updatedAt = Date.now()" aria-label="Janela de monitoramento" class="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#0A192F] outline-none text-sm font-bold">
                       </div>
                       <p class="text-[10px] text-slate-500 leading-relaxed p-4 bg-amber-50 rounded-2xl border border-amber-100 italic">
-                         O fluxo aguardará a ação por este período. Se ocorrer, segue caminho "SIM" imediatamente. Se não ocorrer, se                       </p>
+                         O fluxo aguardará a ação por este período. Se ocorrer, segue caminho "SIM" imediatamente. Se não ocorrer, se segue o caminho "NÃO".
+                      </p>
                     </div>
                   }
 
@@ -429,11 +430,18 @@ import { WorkflowNode } from '../models/company.model';
                     <div class="space-y-4">
                       <div>
                         <label for="webhookUrl" class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">URL Endpoint</label>
-                        <input id="webhookUrl" [(ngModel)]="node.config.url" (ngModelChange)="wf.updatedAt = Date.now()" class="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#0A192F] outline-none text-sm" placeholder="https://api.myapp.com/webhook...">
+                        <input id="webhookUrl" [value]="node.config.url || ''" 
+                               (input)="node.config.url = $any($event.target).value; wf.updatedAt = Date.now()" 
+                               class="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#0A192F] outline-none text-sm" 
+                               placeholder="https://api.myapp.com/webhook..."
+                               aria-label="URL do Webhook">
                       </div>
                       <div>
                         <label for="webhookMethod" class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Método</label>
-                        <select id="webhookMethod" [(ngModel)]="node.config.method" (ngModelChange)="wf.updatedAt = Date.now()" class="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#0A192F] outline-none text-sm font-bold bg-white appearance-none">
+                        <select id="webhookMethod" [value]="node.config.method || 'POST'" 
+                                (change)="node.config.method = $any($event.target).value; wf.updatedAt = Date.now()" 
+                                class="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#0A192F] outline-none text-sm font-bold bg-white appearance-none"
+                                aria-label="Método HTTP">
                            <option value="POST">POST</option>
                            <option value="GET">GET</option>
                            <option value="PUT">PUT</option>
@@ -441,14 +449,16 @@ import { WorkflowNode } from '../models/company.model';
                       </div>
                       <div>
                         <label for="webhookPayload" class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Custom Payload (JSON)</label>
-                        <textarea id="webhookPayload" [(ngModel)]="node.config.payload" (ngModelChange)="wf.updatedAt = Date.now()" rows="6" class="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#0A192F] outline-none text-xs font-mono" placeholder='{"id": "contact_id_here"}'></textarea>
+                        <textarea id="webhookPayload" [value]="node.config.payload || ''" 
+                                  (input)="node.config.payload = $any($event.target).value; wf.updatedAt = Date.now()" 
+                                  rows="6" 
+                                  class="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#0A192F] outline-none text-xs font-mono" 
+                                  placeholder='{"id": "contact_id_here"}'
+                                  aria-label="Payload JSON"></textarea>
                       </div>
                     </div>
                   }
                </div>
-                 }              </div>
-                 }
-              </div>
 
                <div class="p-4 border-t border-slate-50 bg-slate-50/50">
                  <div class="grid grid-cols-2 gap-4">
@@ -473,7 +483,13 @@ import { WorkflowNode } from '../models/company.model';
           <div class="flex flex-col items-center w-full max-w-sm relative">
              @if (step.type.startsWith('condition')) {
                 <!-- Nó de Condição -->
-                <div [class]="automationEngine.selectedNodeId() === step.id ? 'ring-4 ring-amber-100 border-amber-600' : 'border-slate-100 hover:border-amber-300'" class="bg-white border text-center rounded-3xl p-6 shadow-xl w-full transition-all group relative cursor-pointer" (click)="automationEngine.selectNode(step.id)">
+                <div [class]="automationEngine.selectedNodeId() === step.id ? 'ring-4 ring-amber-100 border-amber-600' : 'border-slate-100 hover:border-amber-300'" 
+                     class="bg-white border text-center rounded-3xl p-6 shadow-xl w-full transition-all group relative cursor-pointer" 
+                     (click)="automationEngine.selectNode(step.id)"
+                     (keydown.enter)="automationEngine.selectNode(step.id)"
+                     tabindex="0"
+                     role="button"
+                     [attr.aria-label]="'Condição: ' + step.type">
                    <div class="absolute -top-3 -right-3 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button (click)="automationEngine.removeNode(steps, i); $event.stopPropagation()" class="w-7 h-7 rounded-xl bg-rose-500 text-white flex items-center justify-center hover:bg-rose-600 shadow-lg shadow-rose-200">
                         <mat-icon class="text-[16px]">delete</mat-icon>
@@ -525,7 +541,13 @@ import { WorkflowNode } from '../models/company.model';
                 </div>
              } @else {
                 <!-- Nó de Ação Normal -->
-                <div [class]="automationEngine.selectedNodeId() === step.id ? 'ring-4 ring-blue-100 border-blue-600' : 'border-slate-100 hover:border-blue-300'" class="bg-white border rounded-3xl p-6 shadow-xl w-full relative transition-all group cursor-pointer" (click)="automationEngine.selectNode(step.id)">
+                <div [class]="automationEngine.selectedNodeId() === step.id ? 'ring-4 ring-blue-100 border-blue-600' : 'border-slate-100 hover:border-blue-300'" 
+                     class="bg-white border rounded-3xl p-6 shadow-xl w-full relative transition-all group cursor-pointer" 
+                     (click)="automationEngine.selectNode(step.id)"
+                     (keydown.enter)="automationEngine.selectNode(step.id)"
+                     tabindex="0"
+                     role="button"
+                     [attr.aria-label]="'Ação: ' + step.type">
                    <div class="absolute -top-3 -right-3 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button (click)="automationEngine.removeNode(steps, i); $event.stopPropagation()" class="w-7 h-7 rounded-xl bg-rose-500 text-white flex items-center justify-center hover:bg-rose-600 shadow-lg shadow-rose-200">
                         <mat-icon class="text-[16px]">delete</mat-icon>
@@ -573,8 +595,17 @@ import { WorkflowNode } from '../models/company.model';
 
       <!-- Modal de Adição de Passo -->
       @if (automationEngine.isAddingNodeModalOpen()) {
-        <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4" (click)="automationEngine.closeAddNodeModal()">
-           <div class="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200" (click)="$event.stopPropagation()">
+        <div 
+          role="presentation"
+          class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4" 
+          (click)="automationEngine.closeAddNodeModal()"
+          (keydown.escape)="automationEngine.closeAddNodeModal()">
+           <div 
+             role="dialog"
+             aria-modal="true"
+             class="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200" 
+             (click)="$event.stopPropagation()"
+             (keydown)="$event.stopPropagation()">
               <div class="p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
                  <div>
                     <h3 class="text-xl font-bold text-[#0A192F]">Adicionar Novo Passo</h3>
@@ -634,8 +665,17 @@ import { WorkflowNode } from '../models/company.model';
 
       <!-- Delete Workflow Modal -->
       @if (automationEngine.workflowToDeleteId()) {
-        <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4 animate-in fade-in duration-200" (click)="automationEngine.cancelDeleteWorkflow()">
-          <div class="bg-white rounded-[2rem] shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-300 border border-white/20 relative z-10" (click)="$event.stopPropagation()">
+        <div 
+          role="presentation"
+          class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4 animate-in fade-in duration-200" 
+          (click)="automationEngine.cancelDeleteWorkflow()"
+          (keydown.escape)="automationEngine.cancelDeleteWorkflow()">
+          <div 
+            role="dialog" 
+            aria-modal="true"
+            class="bg-white rounded-[2rem] shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-300 border border-white/20 relative z-10" 
+            (click)="$event.stopPropagation()"
+            (keydown)="$event.stopPropagation()">
             <div class="px-8 pt-8 pb-4 flex items-center justify-between">
               <div class="flex items-center gap-4">
                 <div class="w-12 h-12 rounded-2xl bg-rose-600 text-white flex items-center justify-center shadow-lg shadow-rose-100 flex-shrink-0">
@@ -677,8 +717,17 @@ import { WorkflowNode } from '../models/company.model';
 
       <!-- Delete Activity State Modal -->
       @if (automationEngine.stateToDelete(); as state) {
-        <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4 animate-in fade-in duration-200" (click)="automationEngine.cancelDeleteState()">
-          <div class="bg-white rounded-[2rem] shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-300 border border-white/20 relative z-10" (click)="$event.stopPropagation()">
+        <div 
+          role="presentation"
+          class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4 animate-in fade-in duration-200" 
+          (click)="automationEngine.cancelDeleteState()"
+          (keydown.escape)="automationEngine.cancelDeleteState()">
+          <div 
+            role="dialog"
+            aria-modal="true"
+            class="bg-white rounded-[2rem] shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-300 border border-white/20 relative z-10" 
+            (click)="$event.stopPropagation()"
+            (keydown)="$event.stopPropagation()">
             <div class="px-8 pt-8 pb-4 flex items-center justify-between">
               <div class="flex items-center gap-4">
                 <div class="w-12 h-12 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-lg shadow-blue-100 flex-shrink-0">
@@ -717,9 +766,9 @@ import { WorkflowNode } from '../models/company.model';
   `]
 })
 export class AutomationPanel {
+  protected readonly Date = Date;
   public storageService = inject(StorageService);
   public automationEngine = inject(AutomationEngineService);
-  public Date = Date;
 
   onTemplateSelectChange(event: Event, node: WorkflowNode) {
     const select = event.target as HTMLSelectElement;

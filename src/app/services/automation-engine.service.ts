@@ -23,6 +23,7 @@ export interface WorkflowExecutionState {
   providedIn: 'root'
 })
 export class AutomationEngineService implements OnDestroy {
+  private intervalId?: ReturnType<typeof setInterval>;
   private storageService = inject(StorageService);
   private emailService = inject(EmailService);
   private geminiService = inject(GeminiService);
@@ -41,6 +42,21 @@ export class AutomationEngineService implements OnDestroy {
   public automationEditorTab = signal<'builder' | 'logs'>('builder');
   public isAddingNodeModalOpen = signal<boolean>(false);
   public nodeInsertContext = signal<{steps: WorkflowNode[], index: number} | null>(null);
+
+  public isPerformanceMode = signal<boolean>(false);
+  
+  public togglePerformanceMode() {
+    this.isPerformanceMode.update(v => !v);
+    this.stopTicker();
+    this.startTicker();
+    
+    if (this.isPerformanceMode()) {
+      this.storageService.clearOldData(true);
+      this.storageService.addNotification('⚡ Modo Poupança Ativado', 'As automações em tempo real serão executadas com menos frequência para poupar recursos.', 'info');
+    } else {
+      this.storageService.addNotification('🚀 Modo Performance Ativado', 'O motor de automação voltou ao ritmo normal.', 'success');
+    }
+  }
 
   public automationStats = computed(() => {
     const automations = this.storageService.automations();
@@ -282,14 +298,40 @@ export class AutomationEngineService implements OnDestroy {
   constructor() {
     this.loadStates();
     if (isPlatformBrowser(this.platformId)) {
-      this.intervalId = setInterval(() => this.tick(), 60000); // Check every minute
+      this.setupVisibilityListener();
+      this.startTicker();
+    }
+  }
+
+  private setupVisibilityListener() {
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+          this.stopTicker();
+        } else {
+          this.startTicker();
+        }
+      });
+    }
+  }
+
+  private startTicker() {
+    if (this.intervalId) return;
+    const interval = this.isPerformanceMode() ? 300000 : 60000; // 5 min vs 1 min
+    this.intervalId = setInterval(() => this.tick(), interval);
+    // Initial tick after a short delay
+    setTimeout(() => this.tick(), 2000);
+  }
+
+  private stopTicker() {
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+      this.intervalId = undefined;
     }
   }
 
   ngOnDestroy() {
-    if (this.intervalId) {
-      clearInterval(this.intervalId);
-    }
+    this.stopTicker();
   }
 
   private loadStates() {
@@ -359,7 +401,7 @@ export class AutomationEngineService implements OnDestroy {
     this.saveStates();
   }
 
-  public handleWorkflowActivated(workflow: AutomationWorkflow) {
+  public async handleWorkflowActivated(workflow: AutomationWorkflow) {
     if (workflow.status !== 'active') return;
 
     let shouldTick = false;
@@ -372,40 +414,51 @@ export class AutomationEngineService implements OnDestroy {
        if (list && list.companyIds && list.companyIds.length > 0) {
            const companies = this.storageService.savedCompanies().filter(c => list.companyIds.includes(c.id));
            
-           this.statesSignal.update(states => {
-               const newStates = [...states];
-               for (const company of companies) {
-                   if (!workflow.steps || workflow.steps.length === 0) break;
-                   
-                   // Skip if already in workflow (even if completed or paused, we don't double entry for now)
-                   if (newStates.some(s => s.workflowId === workflow.id && s.companyId === company.id)) {
-                       continue;
-                   }
+           // Process in batches to avoid locking the main thread for large lists
+           const batchSize = 30;
+           for (let i = 0; i < companies.length; i += batchSize) {
+               const batch = companies.slice(i, i + batchSize);
+               
+               this.statesSignal.update(states => {
+                   const newStates = [...states];
+                   for (const company of batch) {
+                       if (!workflow.steps || workflow.steps.length === 0) break;
+                       
+                       // Skip if already in workflow (even if completed or paused, we don't double entry for now)
+                       if (newStates.some(s => s.workflowId === workflow.id && s.companyId === company.id)) {
+                           continue;
+                       }
 
-                   const email = company.emails && company.emails.length > 0 ? company.emails[0] : null;
-                   if (!email) continue;
-                   
-                   const firstNode = workflow.steps[0];
-                   
-                   newStates.push({
-                     workflowId: workflow.id,
-                     companyId: company.id,
-                     targetEmail: email,
-                     currentNodeId: firstNode.id,
-                     entryTime: Date.now(),
-                     lastActionTime: Date.now(),
-                     status: 'running',
-                     variables: {},
-                     path: []
-                   });
-                   
-                   this.updateWorkflowStats(workflow.id, 'entered');
-                   shouldTick = true;
+                       const email = company.emails && company.emails.length > 0 ? company.emails[0] : null;
+                       if (!email) continue;
+                       
+                       const firstNode = workflow.steps[0];
+                       
+                       newStates.push({
+                         workflowId: workflow.id,
+                         companyId: company.id,
+                         targetEmail: email,
+                         currentNodeId: firstNode.id,
+                         entryTime: Date.now(),
+                         lastActionTime: Date.now(),
+                         status: 'running',
+                         variables: {},
+                         path: []
+                       });
+                       
+                       this.updateWorkflowStats(workflow.id, 'entered');
+                       shouldTick = true;
+                   }
+                   return newStates;
+               });
+               
+               this.saveStates();
+               
+               // Yield to main thread if more batches remain
+               if (i + batchSize < companies.length) {
+                   await new Promise(resolve => setTimeout(resolve, 20));
                }
-               return newStates;
-           });
-           
-           this.saveStates();
+           }
        }
     }
 
@@ -508,54 +561,129 @@ export class AutomationEngineService implements OnDestroy {
     }
   }
 
+  private isTicking = false;
   private async tick() {
-    const timeNow = Date.now();
-    let hasChanges = false;
+    if (this.isTicking) return;
     
-    const currentStates = this.statesSignal();
-    const nextStates = [...currentStates];
+    // Stop automation if tab is hidden to save resources, unless specifically running a heavy background task
+    if (typeof document !== 'undefined' && document.hidden) {
+      return;
+    }
 
-    for (const state of nextStates) {
-      if (state.status !== 'running') continue;
+    this.isTicking = true;
+
+    try {
+      const timeNow = Date.now();
+      const currentStates = this.statesSignal();
+      const runningStates = currentStates.filter(s => s.status === 'running');
       
-      const wf = this.storageService.automations().find(a => a.id === state.workflowId);
+      if (runningStates.length === 0) {
+        this.isTicking = false;
+        return;
+      }
+
+      // Process states in smaller chunks to keep main thread responsive
+      const chunkSize = 10;
+      for (let i = 0; i < runningStates.length; i += chunkSize) {
+        const chunk = runningStates.slice(i, i + chunkSize);
+        await this.processStateChunk(chunk, timeNow);
+        
+        // Dynamic wait based on queue size
+        const waitTime = runningStates.length > 100 ? 10 : 30;
+        if (i + chunkSize < runningStates.length) {
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+        }
+      }
+    } finally {
+      this.isTicking = false;
+      this.saveStates();
+    }
+  }
+
+  private async processStateChunk(chunk: WorkflowExecutionState[], timeNow: number) {
+    let hasChanges = false;
+    const allStates = [...this.statesSignal()];
+    const automations = this.storageService.automations();
+
+    for (const state of chunk) {
+      const stateIdx = allStates.findIndex(s => s.workflowId === state.workflowId && s.companyId === state.companyId);
+      if (stateIdx === -1) continue;
+
+      const wf = automations.find(a => a.id === state.workflowId);
       if (!wf || wf.status !== 'active') {
-        state.status = 'paused';
+        allStates[stateIdx].status = 'paused';
         hasChanges = true;
         continue;
       }
       
-      const node = this.findNodeById(wf.steps, state.currentNodeId);
+      const nodeMap = this.getWorkflowNodeMap(wf.id, wf.steps);
+      const node = nodeMap.get(state.currentNodeId);
+      
       if (!node) {
-        this.completeExecution(state, wf);
+        this.completeExecution(allStates[stateIdx], wf);
         hasChanges = true;
         continue;
       }
       
-      const canAdvance = await this.evaluateNode(state, node, wf, timeNow);
-      
-      // Update Node Stats
       this.incrementNodeStat(wf.id, node.id, 'reached');
+      const canAdvance = await this.evaluateNode(allStates[stateIdx], node, wf, timeNow);
 
       if (canAdvance.advance) {
         this.incrementNodeStat(wf.id, node.id, 'processed');
+        const currentState = allStates[stateIdx];
         if (canAdvance.nextNodeId) {
-          state.path.push(state.currentNodeId);
-          state.currentNodeId = canAdvance.nextNodeId;
-          state.lastActionTime = timeNow;
+          currentState.path.push(currentState.currentNodeId);
+          currentState.currentNodeId = canAdvance.nextNodeId;
+          currentState.lastActionTime = timeNow;
         } else {
-          this.completeExecution(state, wf);
+          this.completeExecution(currentState, wf);
         }
         hasChanges = true;
       }
     }
 
     if (hasChanges) {
-      this.statesSignal.set(nextStates);
-      this.saveStates();
+      this.statesSignal.set(allStates);
     }
   }
-  
+
+  private nodeMapCache = new Map<string, Map<string, WorkflowNode>>();
+
+  private getWorkflowNodeMap(wfId: string, steps: WorkflowNode[]): Map<string, WorkflowNode> {
+    const cached = this.nodeMapCache.get(wfId);
+    if (cached) return cached;
+
+    const map = new Map<string, WorkflowNode>();
+    const flatten = (nodes: WorkflowNode[]) => {
+      for (const node of nodes) {
+        map.set(node.id, node);
+        if (node.yesBranch) flatten(node.yesBranch);
+        if (node.noBranch) flatten(node.noBranch);
+      }
+    };
+    flatten(steps);
+    this.nodeMapCache.set(wfId, map);
+    return map;
+  }
+
+  private incrementNodeStat(wfId: string, nodeId: string, metric: 'reached' | 'processed') {
+    const automations = this.storageService.automations();
+    const wf = automations.find(a => a.id === wfId);
+    if (!wf) return;
+
+    const nodeMap = this.getWorkflowNodeMap(wfId, wf.steps);
+    const node = nodeMap.get(nodeId);
+    
+    if (node) {
+      if (!node.stats) node.stats = { reached: 0, processed: 0 };
+      if (metric === 'reached') node.stats.reached++;
+      if (metric === 'processed') node.stats.processed++;
+      
+      // We don't save to localStorage for every stat increment to avoid IO bottlenecks
+      // LocalStorage is updated when the workflow is manually saved or when states are saved at end of tick
+    }
+  }
+
   private completeExecution(state: WorkflowExecutionState, wf: AutomationWorkflow) {
      state.status = 'completed';
      const updatedWf = { ...wf, stats: { ...wf.stats, completed: (wf.stats.completed || 0) + 1} };
@@ -601,24 +729,6 @@ export class AutomationEngineService implements OnDestroy {
         }
     }
     return undefined as unknown as string; // Not found in this branch
-  }
-
-  private incrementNodeStat(wfId: string, nodeId: string, metric: 'reached' | 'processed') {
-    const automations = [...this.storageService.automations()];
-    const wfIdx = automations.findIndex(a => a.id === wfId);
-    if (wfIdx === -1) return;
-
-    const wf = { ...automations[wfIdx], steps: this.cloneSteps(automations[wfIdx].steps) };
-    const node = this.findNodeById(wf.steps, nodeId);
-    
-    if (node) {
-      if (!node.stats) node.stats = { reached: 0, processed: 0 };
-      if (metric === 'reached') node.stats.reached++;
-      if (metric === 'processed') node.stats.processed++;
-      
-      automations[wfIdx] = wf;
-      this.storageService.saveAutomations(automations);
-    }
   }
 
   private cloneSteps(steps: WorkflowNode[]): WorkflowNode[] {

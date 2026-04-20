@@ -35,8 +35,7 @@ export class App implements OnInit {
 
   templateForm = this.fb.group({
     name: ['', Validators.required],
-    subject: ['', Validators.required],
-    body: [''] // No longer required as we use blocks
+    subject: ['', Validators.required]
   });
   editingTemplateId = signal<string | null>(null);
   templateToDeleteId = signal<string | null>(null);
@@ -281,22 +280,35 @@ export class App implements OnInit {
 
     this.isMovingToList.set(true);
     
-    // Artificial delay for better UX and feedback
-    setTimeout(() => {
-      selected.forEach(companyId => {
-        this.storageService.addCompanyToList(listId, companyId);
+    const processBatch = async (index: number) => {
+      const batchSize = 25;
+      const end = Math.min(index + batchSize, selected.length);
+      const batchIds = selected.slice(index, end);
+      
+      this.storageService.addCompaniesToList(listId, batchIds);
+      
+      // Trigger automations for the batch
+      batchIds.forEach(companyId => {
         const comp = this.storageService.savedCompanies().find(c => c.id === companyId);
         if (comp) {
           this.automationEngine.triggerListJoined(comp, listId);
         }
       });
 
-      const listName = this.storageService.contactLists().find(l => l.id === listId)?.name || 'Lista';
-      this.clearBulkSelection();
-      this.isMovingToList.set(false);
-      this.isMoveToListMenuOpen.set(false);
-      this.storageService.addNotification('📦 Movimentação Concluída', `${selected.length} contactos foram movidos para a lista "${listName}".`, 'success');
-    }, 600);
+      if (end < selected.length) {
+        // Continue with next batch
+        setTimeout(() => processBatch(end), 10);
+      } else {
+        const listName = this.storageService.contactLists().find(l => l.id === listId)?.name || 'Lista';
+        this.clearBulkSelection();
+        this.isMovingToList.set(false);
+        this.isMoveToListMenuOpen.set(false);
+        this.storageService.addNotification('📦 Movimentação Concluída', `${selected.length} contactos foram movidos para a lista "${listName}".`, 'success');
+      }
+    };
+
+    // Small delay before starting for UX
+    setTimeout(() => processBatch(0), 300);
   }
 
   isMovingToList = signal(false);
@@ -946,6 +958,13 @@ export class App implements OnInit {
     if (emailSettings) {
       this.settingsForm.patchValue(emailSettings);
     }
+
+    // Performance optimization: Cleanup old data on startup after 5s
+    if (typeof setTimeout !== 'undefined') {
+      setTimeout(() => {
+        this.storageService.clearOldData();
+      }, 5000);
+    }
   }
 
   // Settings Diagnostics
@@ -1295,12 +1314,12 @@ export class App implements OnInit {
     this.exportService.exportToExcel(cleaned, 'angocontacts_pesquisa.xlsx');
   }
 
-  exportPDF() {
+  async exportPDF() {
     const { cleaned, removedCount } = this.storageService.sanitizeContactsList(this.storageService.savedCompanies());
     if (removedCount > 0) {
       this.storageService.addNotification('Exportação Limpa', `Foram eliminados ${removedCount} contactos duplicados antes da exportação.`, 'info');
     }
-    this.exportService.exportToPDF(cleaned);
+    await this.exportService.exportToPDF(cleaned);
   }
 
   // Email Composer Logic
@@ -1672,22 +1691,48 @@ export class App implements OnInit {
 
     const baseScheduledDate = new Date(this.scheduleDatetime()).getTime();
     
-    let companiesToProcess = [templateCompany];
+    let companiesBase = [templateCompany];
     if (this.isBulkEmailMode()) {
-      companiesToProcess = this.storageService.savedCompanies().filter(c => this.selectedSavedCompanies().includes(c.id));
+      companiesBase = this.storageService.savedCompanies().filter(c => this.selectedSavedCompanies().includes(c.id));
     }
 
-    if (this.emailGenerationMode() === 'sequence' && this.generatedEmailSequence().length > 0) {
-      const sequence = this.generatedEmailSequence();
-      
-      companiesToProcess.forEach(company => {
-        const targetEmail = company.emails.length > 0 ? company.emails[0] : '';
-        
-        sequence.forEach((email, index) => {
-          const scheduledDate = baseScheduledDate + (email.delayDays * 24 * 60 * 60 * 1000);
-          
-          const personalizedSubject = email.subject.replace(/\{\{nome_empresa\}\}/g, company.name);
-          const personalizedBody = email.body.replace(/\{\{nome_empresa\}\}/g, company.name);
+    const processBatch = async (index: number) => {
+      const batchSize = 20;
+      const end = Math.min(index + batchSize, companiesBase.length);
+      const batch = companiesBase.slice(index, end);
+
+      if (this.emailGenerationMode() === 'sequence' && this.generatedEmailSequence().length > 0) {
+        const sequence = this.generatedEmailSequence();
+        batch.forEach(company => {
+          const targetEmail = company.emails.length > 0 ? company.emails[0] : '';
+          sequence.forEach((email, sIdx) => {
+            const scheduledDate = baseScheduledDate + (email.delayDays * 24 * 60 * 60 * 1000);
+            const personalizedSubject = email.subject.replace(/\{\{nome_empresa\}\}/g, company.name);
+            const personalizedBody = email.body.replace(/\{\{nome_empresa\}\}/g, company.name);
+
+            this.storageService.addCampaign({
+              id: crypto.randomUUID(),
+              companyId: company.id,
+              companyName: company.name,
+              targetEmail,
+              subject: personalizedSubject,
+              body: personalizedBody,
+              status: 'scheduled',
+              type: 'Sequência de Prospecção',
+              tone: this.emailForm.value.tone || '',
+              scheduledDate,
+              sequenceIndex: sIdx + 1,
+              sequenceTotal: sequence.length
+            });
+          });
+        });
+      } else {
+        const subject = this.generatedEmailSubject();
+        const body = this.generatedEmailBody();
+        batch.forEach(company => {
+          const targetEmail = company.emails.length > 0 ? company.emails[0] : '';
+          const personalizedSubject = subject.replace(/\{\{nome_empresa\}\}/g, company.name);
+          const personalizedBody = body.replace(/\{\{nome_empresa\}\}/g, company.name);
 
           this.storageService.addCampaign({
             id: crypto.randomUUID(),
@@ -1697,55 +1742,36 @@ export class App implements OnInit {
             subject: personalizedSubject,
             body: personalizedBody,
             status: 'scheduled',
-            type: 'Sequência de Prospecção',
+            type: this.emailForm.value.type || '',
             tone: this.emailForm.value.tone || '',
-            scheduledDate,
-            sequenceIndex: index + 1,
-            sequenceTotal: sequence.length
+            scheduledDate: baseScheduledDate
           });
         });
-      });
-
-      if (this.isBulkEmailMode()) {
-        this.storageService.addNotification('Sequência em Massa Agendada', `Foram agendadas sequências para ${companiesToProcess.length} empresas.`, 'success', 'medium', undefined, { label: 'Ver Campanhas', tab: 'campaigns' });
-        this.clearBulkSelection();
-      } else {
-        this.storageService.addNotification('Sequência Agendada', `Foram agendados ${sequence.length} emails para ${templateCompany.name}.`, 'success', 'medium', undefined, { label: 'Ver Campanhas', tab: 'campaigns' });
       }
-    } else {
-      const subject = this.generatedEmailSubject();
-      const body = this.generatedEmailBody();
-      
-      companiesToProcess.forEach(company => {
-        const targetEmail = company.emails.length > 0 ? company.emails[0] : '';
-        const personalizedSubject = subject.replace(/\{\{nome_empresa\}\}/g, company.name);
-        const personalizedBody = body.replace(/\{\{nome_empresa\}\}/g, company.name);
 
-        this.storageService.addCampaign({
-          id: crypto.randomUUID(),
-          companyId: company.id,
-          companyName: company.name,
-          targetEmail,
-          subject: personalizedSubject,
-          body: personalizedBody,
-          status: 'scheduled',
-          type: this.emailForm.value.type || '',
-          tone: this.emailForm.value.tone || '',
-          scheduledDate: baseScheduledDate
-        });
-      });
-
-      const formattedDate = new Date(baseScheduledDate).toLocaleString('pt-PT', { dateStyle: 'short', timeStyle: 'short' });
-      
-      if (this.isBulkEmailMode()) {
-        this.storageService.addNotification('Campanha em Massa Agendada', `Emails para ${companiesToProcess.length} empresas agendados para ${formattedDate}.`, 'success', 'medium', undefined, { label: 'Ver Campanhas', tab: 'campaigns' });
-        this.clearBulkSelection();
+      if (end < companiesBase.length) {
+        setTimeout(() => processBatch(end), 10);
       } else {
-        this.storageService.addNotification('Email Agendado', `Email para ${templateCompany.name} agendado para ${formattedDate}.`, 'success');
+        const formattedDate = new Date(baseScheduledDate).toLocaleString('pt-PT', { dateStyle: 'short', timeStyle: 'short' });
+        if (this.isBulkEmailMode()) {
+          this.storageService.addNotification('Campanha Agendada', `Emails processados para ${companiesBase.length} empresas.`, 'success', 'medium', undefined, { label: 'Ver Campanhas', tab: 'campaigns' });
+          this.clearBulkSelection();
+        } else {
+          this.storageService.addNotification('Email Agendado', `Email para ${templateCompany.name} agendado para ${formattedDate}.`, 'success');
+        }
+        this.isSchedulingMode.set(false);
+        this.closeEmailModal();
       }
+    };
+
+    processBatch(0);
+  }
+
+  // Performance helpers
+  clearAllMemory() {
+    if (confirm('Deseja libertar memória eliminando registos antigos? Isto manterá as suas empresas e modelos, mas libertará espaço no historial e logs.')) {
+      this.storageService.clearOldData();
+      this.storageService.showToast('Memória Libertada', 'Os dados antigos foram removidos com sucesso.', 'success');
     }
-
-    this.isSchedulingMode.set(false);
-    this.closeEmailModal();
   }
 }

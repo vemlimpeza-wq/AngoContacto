@@ -291,7 +291,7 @@ export class StorageService {
     };
     this.notifications.update(list => {
       const newList = [newNotif, ...list];
-      return newList.slice(0, 50); // Keep only last 50 notifications
+      return newList.slice(0, 20); // Reduced from 50 to 20 for memory efficiency
     });
     this.saveNotifications();
 
@@ -347,11 +347,24 @@ export class StorageService {
       for (const company of companies) {
         const normalizedNewName = this.normalizeName(company.name);
         if (!newHistory.find(c => this.normalizeName(c.name) === normalizedNewName)) {
-          newHistory.push(company);
-          addedCount++;
+           // Use lighter data: Only store essential fields in history
+           const lighterCompany: Company = {
+             id: company.id,
+             name: company.name,
+             sector: company.sector,
+             province: company.province,
+             emails: (company.emails || []).slice(0, 1),
+             landlinePhone: company.landlinePhone,
+             mobilePhone: company.mobilePhone,
+             address: company.address || '',
+             socialMedia: company.socialMedia || [],
+             description: company.description || ''
+           };
+           newHistory.push(lighterCompany);
+           addedCount++;
         }
       }
-      return newHistory;
+      return newHistory.slice(-50); // Keep only last 50 to free memory
     });
     this.saveHistory();
     return addedCount;
@@ -497,9 +510,21 @@ export class StorageService {
   }
 
   addCompanyToList(listId: string, companyId: string) {
+    this.addCompaniesToList(listId, [companyId]);
+  }
+
+  addCompaniesToList(listId: string, companyIds: string[]) {
     this.contactLists.update(lists => lists.map(l => {
-      if (l.id === listId && !l.companyIds.includes(companyId)) {
-        return { ...l, companyIds: [...l.companyIds, companyId] };
+      if (l.id === listId) {
+        const newIds = [...l.companyIds];
+        let changed = false;
+        companyIds.forEach(id => {
+          if (!newIds.includes(id)) {
+            newIds.push(id);
+            changed = true;
+          }
+        });
+        return changed ? { ...l, companyIds: newIds } : l;
       }
       return l;
     }));
@@ -528,5 +553,49 @@ export class StorageService {
   saveContactLists(lists: ContactList[]) {
     this.contactLists.set(lists);
     this.persistContactLists();
+  }
+
+  /**
+   * Performance helper: Clear old data to free memory
+   * @param force - If true, performs a more aggressive cleanup
+   */
+  clearOldData(force = false) {
+    // Keep only last N notifications
+    const notifyLimit = force ? 5 : 10;
+    this.notifications.update(n => n.slice(0, notifyLimit));
+    this.saveNotifications();
+    
+    // Clear search history
+    const historyLimit = force ? 5 : 20;
+    this.searchHistory.update(h => h.slice(-historyLimit));
+    this.saveHistory();
+
+    // Clear old logs in automations
+    const logLimit = force ? 0 : 10;
+    this.automations.update(wf => wf.map(a => ({
+      ...a,
+      logs: (a.logs || []).slice(0, logLimit)
+    })));
+    this.saveAutomations(this.automations());
+
+    if (force) {
+      // Clear specific cache values if any (though currently mostly signal based)
+      // This is a placeholder for future cache clearing logic
+      console.log('Aggressive memory cleanup performed');
+    }
+  }
+
+  /**
+   * Heavy loops avoidance: Use a lighter search history mechanism
+   */
+  addToHistory(query: string, resultsCount: number) {
+    const newItem = { query, timestamp: Date.now(), resultsCount };
+    this.searchHistory.update(h => {
+      // Avoid duplicate recent queries
+      if (h.length > 0 && h[h.length - 1].query === query) return h;
+      const history = [...h, newItem];
+      return history.slice(-50); // Hard limit
+    });
+    this.saveHistory();
   }
 }
