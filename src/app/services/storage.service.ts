@@ -429,6 +429,33 @@ export class StorageService {
     this.saveCampaigns();
   }
 
+  removeCampaignGroup(companyId: string) {
+    this.campaigns.update(list => list.filter(c => c.companyId !== companyId));
+    this.saveCampaigns();
+  }
+
+  removeCompletedCampaigns() {
+    this.campaigns.update(list => {
+      // First identify which companies have ONLY 'sent' campaigns
+      const groups = new Map<string, EmailCampaign[]>();
+      list.forEach(c => {
+        if (!groups.has(c.companyId)) groups.set(c.companyId, []);
+        groups.get(c.companyId)!.push(c);
+      });
+
+      const idsToRemove = new Set<string>();
+      groups.forEach((campaigns, companyId) => {
+        const allSent = campaigns.every(c => c.status === 'sent');
+        if (allSent) {
+          idsToRemove.add(companyId);
+        }
+      });
+
+      return list.filter(c => !idsToRemove.has(c.companyId));
+    });
+    this.saveCampaigns();
+  }
+
   trackCampaignInteraction(id: string, type: 'opened' | 'clicked') {
     this.campaigns.update(list => list.map(c => {
       if (c.id === id) {
@@ -586,16 +613,10 @@ export class StorageService {
   }
 
   /**
-   * Heavy loops avoidance: Use a lighter search history mechanism
+   * Heavy loops avoidance: Log the search query purely for diagnostic purposes
    */
-  addToHistory(query: string, resultsCount: number) {
-    const newItem = { query, timestamp: Date.now(), resultsCount };
-    this.searchHistory.update(h => {
-      // Avoid duplicate recent queries
-      if (h.length > 0 && h[h.length - 1].query === query) return h;
-      const history = [...h, newItem];
-      return history.slice(-50); // Hard limit
-    });
-    this.saveHistory();
+  public addQueryToLog(query: string, resultsCount: number) {
+    // This is a separate concept from search history which stores actual companies
+    console.log(`Search performed: "${query}" returned ${resultsCount} results.`);
   }
 }

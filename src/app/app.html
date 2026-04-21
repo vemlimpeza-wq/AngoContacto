@@ -708,10 +708,10 @@
             </div>
           </div>
 
-          @if (selectedSavedCompanies().length > 0) {
+          @if (selectedSavedCompanies().size > 0) {
             <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-center justify-between animate-in fade-in slide-in-from-top-2 flex-wrap gap-4">
               <div class="flex items-center gap-3">
-                <span class="bg-blue-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold">{{ selectedSavedCompanies().length }}</span>
+                <span class="bg-blue-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold">{{ selectedSavedCompanies().size }}</span>
                 <span class="text-sm font-medium text-blue-900">empresas selecionadas</span>
               </div>
               <div class="flex items-center gap-2 flex-wrap">
@@ -809,7 +809,7 @@
                   <tr>
                     <th class="px-4 py-4 w-12">
                       <input type="checkbox" 
-                        [checked]="selectedSavedCompanies().length === storageService.savedCompanies().length && storageService.savedCompanies().length > 0"
+                        [checked]="selectedSavedCompanies().size === storageService.savedCompanies().length && storageService.savedCompanies().length > 0"
                         (change)="toggleAllSavedCompanies($event)"
                         class="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 bg-white/10 cursor-pointer">
                     </th>
@@ -859,10 +859,10 @@
                 </thead>
                 <tbody class="divide-y divide-slate-100">
                   @for (company of sortedSavedCompanies(); track company.id) {
-                    <tr class="hover:bg-slate-50 transition-colors" [class.bg-blue-50/30]="selectedSavedCompanies().includes(company.id)">
+                    <tr class="hover:bg-slate-50 transition-colors" [class.bg-blue-50/30]="selectedSavedCompanies().has(company.id)">
                       <td class="px-4 py-4">
                         <input type="checkbox" 
-                          [checked]="selectedSavedCompanies().includes(company.id)"
+                          [checked]="selectedSavedCompanies().has(company.id)"
                           (change)="toggleSavedCompanySelection(company.id)"
                           class="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer">
                       </td>
@@ -1213,6 +1213,15 @@
             <h2 class="text-xl font-bold text-slate-900">Campanhas de Email</h2>
             <p class="text-sm text-slate-500">Faça a gestão dos seus emails de prospecção gerados por IA.</p>
           </div>
+          @if (groupedCampaigns().length > 0) {
+            <button 
+              (click)="deleteCompletedCampaigns()"
+              [disabled]="campaignStats().sent === 0"
+              class="flex items-center gap-2 px-4 py-2 text-sm font-medium text-red-600 bg-white hover:bg-red-50 rounded-xl border border-red-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-sm">
+              <mat-icon class="text-lg">delete_sweep</mat-icon>
+              Limpar Concluídas
+            </button>
+          }
         </div>
 
         <!-- Dashboard Stats -->
@@ -1333,7 +1342,11 @@
         @if (groupedCampaigns().length > 0) {
           <div class="grid grid-cols-1 gap-6">
             @for (group of groupedCampaigns(); track group.companyId) {
-              <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden hover:shadow-md transition-shadow">
+              <div 
+                [class.opacity-0]="deletingIds().has(group.companyId)"
+                [class.scale-95]="deletingIds().has(group.companyId)"
+                [class.pointer-events-none]="deletingIds().has(group.companyId)"
+                class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden hover:shadow-md transition-all duration-300">
                 <div 
                   (click)="toggleCompanyExpansion(group.companyId)"
                   (keydown.enter)="toggleCompanyExpansion(group.companyId)"
@@ -1363,6 +1376,14 @@
                         <mat-icon class="text-[14px]">schedule</mat-icon> Em Progresso
                       </span>
                     }
+                    <button 
+                      (click)="deleteCampaignGroup($event, group.companyId)"
+                      class="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all active:scale-90"
+                      [class.animate-pulse]="deletingIds().has(group.companyId)"
+                      [class.text-red-600]="deletingIds().has(group.companyId)"
+                      title="Eliminar este grupo de campanhas">
+                      <mat-icon [class.rotate-12]="deletingIds().has(group.companyId)">delete_outline</mat-icon>
+                    </button>
                   </div>
                 </div>
 
@@ -1412,9 +1433,13 @@
                 <div class="p-5 overflow-x-auto">
                   <div class="flex gap-4 min-w-max pb-2">
                     @for (campaign of group.campaigns; track campaign.id) {
-                      <div class="w-[280px] flex-shrink-0 bg-white border border-slate-200 rounded-xl p-4 relative group hover:border-[#0A192F] transition-colors">
-                        <!-- Status Indicator -->
-                        <div class="absolute top-4 right-4">
+                      <div 
+                        [class.opacity-0]="deletingIds().has(campaign.id)"
+                        [class.scale-95]="deletingIds().has(campaign.id)"
+                        [class.pointer-events-none]="deletingIds().has(campaign.id)"
+                        class="w-[280px] flex-shrink-0 bg-white border border-slate-200 rounded-xl p-4 relative group hover:border-[#0A192F] transition-all duration-300">
+                        <!-- Status Indicator & Actions -->
+                        <div class="absolute top-4 right-4 flex items-center gap-2">
                           @if (campaign.status === 'sent') {
                             <div class="w-2.5 h-2.5 rounded-full bg-emerald-500" title="Enviado"></div>
                           } @else if (campaign.status === 'scheduled') {
@@ -1422,6 +1447,15 @@
                           } @else {
                             <div class="w-2.5 h-2.5 rounded-full bg-red-500" title="Falhou"></div>
                           }
+                          
+                          <button 
+                            (click)="deleteSingleCampaign(campaign.id)"
+                            class="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-all active:scale-75"
+                            [class.opacity-100]="deletingIds().has(campaign.id)"
+                            [class.text-red-500]="deletingIds().has(campaign.id)"
+                            title="Eliminar este email">
+                            <mat-icon class="text-sm">delete</mat-icon>
+                          </button>
                         </div>
                         
                         <div class="mb-3">
@@ -1655,32 +1689,112 @@
             </div>
 
             <div class="border-t border-slate-100 pt-6">
-              <h4 class="text-sm font-bold text-slate-900 mb-4 font-mono uppercase tracking-widest text-[#0A192F]">Manutenção & Dados</h4>
-              <div class="bg-indigo-50/50 rounded-2xl p-6 border-2 border-dashed border-indigo-100">
+              <div class="flex items-center justify-between mb-4">
+                <h4 class="text-sm font-bold text-slate-900 font-mono uppercase tracking-widest text-[#0A192F]">Gestão de Recursos & Performance</h4>
+                <div class="flex items-center gap-2">
+                  <span class="flex h-2 w-2 rounded-full" [class.bg-emerald-500]="!automationEngine.isPerformanceMode()" [class.bg-amber-500]="automationEngine.isPerformanceMode()"></span>
+                  <span class="text-[10px] font-bold text-slate-400 uppercase tracking-tight">Sistema {{ automationEngine.isPerformanceMode() ? 'Otimizado' : 'Nominal' }}</span>
+                </div>
+              </div>
+
+              <!-- Performance Controls Grid -->
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                <!-- Toggle Performance Mode -->
+                <div 
+                  (click)="automationEngine.togglePerformanceMode()"
+                  (keydown.enter)="automationEngine.togglePerformanceMode()"
+                  tabindex="0"
+                  role="button"
+                  aria-label="Alternar Modo Poupança"
+                  class="cursor-pointer group relative overflow-hidden rounded-2xl border-2 p-4 transition-all duration-300"
+                  [class.bg-amber-50]="automationEngine.isPerformanceMode()"
+                  [class.border-amber-200]="automationEngine.isPerformanceMode()"
+                  [class.bg-white]="!automationEngine.isPerformanceMode()"
+                  [class.border-slate-100]="!automationEngine.isPerformanceMode()"
+                  [class.hover:border-amber-400]="automationEngine.isPerformanceMode()"
+                  [class.hover:border-slate-300]="!automationEngine.isPerformanceMode()"
+                >
+                  <div class="flex items-start gap-3">
+                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors" [class.bg-amber-100]="automationEngine.isPerformanceMode()" [class.bg-slate-50]="!automationEngine.isPerformanceMode()">
+                      <mat-icon [class.text-amber-600]="automationEngine.isPerformanceMode()" [class.text-slate-400]="!automationEngine.isPerformanceMode()">
+                        {{ automationEngine.isPerformanceMode() ? 'battery_saver' : 'bolt' }}
+                      </mat-icon>
+                    </div>
+                    <div class="flex-1">
+                      <div class="flex items-center justify-between">
+                        <span class="text-sm font-bold" [class.text-amber-900]="automationEngine.isPerformanceMode()" [class.text-slate-900]="!automationEngine.isPerformanceMode()">Modo Poupança</span>
+                        <div class="h-4 w-8 rounded-full border border-slate-200 p-0.5 transition-colors" [class.bg-amber-500]="automationEngine.isPerformanceMode()" [class.bg-slate-200]="!automationEngine.isPerformanceMode()">
+                          <div class="h-2.5 w-2.5 rounded-full bg-white transition-transform" [class.translate-x-4]="automationEngine.isPerformanceMode()"></div>
+                        </div>
+                      </div>
+                      <p class="mt-1 text-[11px] leading-snug" [class.text-amber-700]="automationEngine.isPerformanceMode()" [class.text-slate-500]="!automationEngine.isPerformanceMode()">
+                        Reduz a frequência de automações para poupar CPU e memória.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Toggle Pause Automations -->
+                <div 
+                  (click)="automationEngine.toggleAutomationPause()"
+                  (keydown.enter)="automationEngine.toggleAutomationPause()"
+                  tabindex="0"
+                  role="button"
+                  aria-label="Pausar todas as automações"
+                  class="cursor-pointer group relative overflow-hidden rounded-2xl border-2 p-4 transition-all duration-300"
+                  [class.bg-red-50]="automationEngine.isAutomationsPaused()"
+                  [class.border-red-200]="automationEngine.isAutomationsPaused()"
+                  [class.bg-white]="!automationEngine.isAutomationsPaused()"
+                  [class.border-slate-100]="!automationEngine.isAutomationsPaused()"
+                  [class.hover:border-red-400]="automationEngine.isAutomationsPaused()"
+                  [class.hover:border-slate-300]="!automationEngine.isAutomationsPaused()"
+                >
+                  <div class="flex items-start gap-3">
+                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors" [class.bg-red-100]="automationEngine.isAutomationsPaused()" [class.bg-slate-50]="!automationEngine.isAutomationsPaused()">
+                      <mat-icon [class.text-red-600]="automationEngine.isAutomationsPaused()" [class.text-slate-400]="!automationEngine.isAutomationsPaused()">
+                        {{ automationEngine.isAutomationsPaused() ? 'pause_circle' : 'play_circle' }}
+                      </mat-icon>
+                    </div>
+                    <div class="flex-1">
+                      <div class="flex items-center justify-between">
+                        <span class="text-sm font-bold" [class.text-red-900]="automationEngine.isAutomationsPaused()" [class.text-slate-900]="!automationEngine.isAutomationsPaused()">Pausar Motor</span>
+                        <div class="h-4 w-8 rounded-full border border-slate-200 p-0.5 transition-colors" [class.bg-red-500]="automationEngine.isAutomationsPaused()" [class.bg-slate-200]="!automationEngine.isAutomationsPaused()">
+                          <div class="h-2.5 w-2.5 rounded-full bg-white transition-transform" [class.translate-x-4]="automationEngine.isAutomationsPaused()"></div>
+                        </div>
+                      </div>
+                      <p class="mt-1 text-[11px] leading-snug" [class.text-red-700]="automationEngine.isAutomationsPaused()" [class.text-slate-500]="!automationEngine.isAutomationsPaused()">
+                        Interrompe todas as tarefas em segundo plano imediatamente.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Maintenance Actions -->
+              <div class="bg-slate-50 rounded-2xl p-5 border border-slate-200">
                 <div class="flex flex-col md:flex-row items-center justify-between gap-6">
                   <div class="flex-1">
-                    <h5 class="text-sm font-bold text-indigo-900 flex items-center gap-2">
-                       <mat-icon class="text-indigo-600">history</mat-icon>
-                       Recuperação de Listas Criadas
+                    <h5 class="text-sm font-bold text-slate-800 flex items-center gap-2">
+                       <mat-icon class="text-indigo-600">cleaning_services</mat-icon>
+                       Otimização de Armazenamento
                     </h5>
-                    <p class="text-xs text-indigo-700 mt-1 leading-relaxed">
-                      Se não encontrar as listas que criou anteriormente (ex: ontem), tente restaurar os dados a partir do armazenamento local. Esta ação tentará recuperar listas a partir de backups automáticos guardados no seu navegador.
+                    <p class="text-xs text-slate-500 mt-1 leading-relaxed">
+                      Elimine dados antigos (notificações, histórico, logs) para libertar espaço no navegador e reduzir o consumo de RAM.
                     </p>
                   </div>
-                  <div class="flex flex-col sm:flex-row items-center gap-3">
+                  <div class="flex flex-wrap items-center gap-2 shrink-0">
                     <button 
                       type="button"
                       (click)="recoverDeletedLists()"
-                      class="whitespace-nowrap px-6 py-3 bg-indigo-600 text-white font-black uppercase tracking-tighter rounded-xl shadow-lg shadow-indigo-100 hover:bg-indigo-700 active:scale-95 transition-all flex items-center gap-2">
-                      <mat-icon>settings_backup_restore</mat-icon>
-                      Restaurar Listas
+                      class="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-white rounded-lg transition-all border border-transparent hover:border-slate-200">
+                      Restaurar Backup
                     </button>
                     <button 
                       type="button"
                       (click)="clearAllMemory()"
-                      class="whitespace-nowrap px-6 py-3 bg-white border-2 border-indigo-200 text-indigo-700 font-black uppercase tracking-tighter rounded-xl hover:bg-indigo-50 active:scale-95 transition-all flex items-center gap-2">
-                      <mat-icon>speed</mat-icon>
-                      Otimizar Memória
+                      class="px-5 py-2.5 bg-indigo-600 text-white font-black uppercase text-[10px] tracking-widest rounded-xl shadow-lg shadow-indigo-100 hover:bg-indigo-700 active:scale-95 transition-all flex items-center gap-2">
+                      <mat-icon class="text-sm">delete_sweep</mat-icon>
+                      Libertar Memória
                     </button>
                   </div>
                 </div>
@@ -2368,7 +2482,7 @@
             <h3 class="text-lg font-bold text-[#0A192F] flex items-center gap-2">
               <mat-icon>auto_awesome</mat-icon>
               @if (isBulkEmailMode()) {
-                Campanha em Massa: {{ selectedSavedCompanies().length }} empresas
+                Campanha em Massa: {{ selectedSavedCompanies().size }} empresas
               } @else {
                 Prospecção Inteligente: {{ currentEmailCompany()?.name }}
               }

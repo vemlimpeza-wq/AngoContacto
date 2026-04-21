@@ -78,28 +78,31 @@ export class GeminiService {
         companies = JSON.parse(text);
       } catch (parseError) {
         console.warn('Incomplete JSON response, attempting to recover...', parseError);
-        console.log('Raw text:', text);
         let recovered = false;
-        // Try to fix the JSON by finding the last valid object end and closing the array
+        
+        // Potential endings: find '}' and try closing the array
         const endingsToTry = [']', '}]', '}]}', '"}', '"]}'];
         
-        for (let i = text.length - 1; i >= Math.max(0, text.length - 500); i--) {
-          const substr = text.substring(0, i);
+        // Scan backwards for last few closing braces to find valid JSON cuts
+        const possibleCuts: number[] = [];
+        for (let i = text.length - 1; i >= Math.max(0, text.length - 1000) && possibleCuts.length < 15; i--) {
+          if (text[i] === '}') possibleCuts.push(i);
+        }
+
+        for (const cutIndex of possibleCuts) {
+          const substr = text.substring(0, cutIndex + 1);
           for (const ending of endingsToTry) {
             try {
               companies = JSON.parse(substr + ending);
               recovered = true;
-              console.log(`Successfully recovered ${companies.length} items from partial JSON.`);
+              console.log(`Recovered ${companies.length} items from partial JSON at index ${cutIndex}`);
               break;
-            } catch {
-              // Continue trying
-            }
+            } catch { /* continue */ }
           }
           if (recovered) break;
         }
 
         if (!recovered) {
-          console.error('Failed to recover partial JSON');
           throw new Error('Falha ao processar a resposta da IA. Por favor, tente novamente.');
         }
       }

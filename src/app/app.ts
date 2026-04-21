@@ -35,7 +35,8 @@ export class App implements OnInit {
 
   templateForm = this.fb.group({
     name: ['', Validators.required],
-    subject: ['', Validators.required]
+    subject: ['', Validators.required],
+    body: ['']
   });
   editingTemplateId = signal<string | null>(null);
   templateToDeleteId = signal<string | null>(null);
@@ -72,12 +73,23 @@ export class App implements OnInit {
   isGeneratingAI = signal(false);
   isRefiningTemplateAI = signal(false);
   templateRefineInstruction = signal('');
+  // Optimization: Map for O(1) lookups of companies
+  savedCompaniesMap = computed(() => {
+    const map = new Map<string, Company>();
+    this.storageService.savedCompanies().forEach(c => map.set(c.id, c));
+    return map;
+  });
+
   aiContextCompanyId = signal<string | null>(null);
-  aiContextCompany = computed(() => this.storageService.savedCompanies().find(c => c.id === this.aiContextCompanyId()));
+  aiContextCompany = computed(() => this.savedCompaniesMap().get(this.aiContextCompanyId() || ''));
 
   // Contact Lists state
   selectedContactListId = signal<string | null>(null);
-  selectedContactList = computed(() => this.storageService.contactLists().find(l => l.id === this.selectedContactListId()) || null);
+  selectedContactList = computed(() => {
+    const id = this.selectedContactListId();
+    if (!id) return null;
+    return this.storageService.contactLists().find(l => l.id === id) || null;
+  });
   isCreatingList = signal(false);
   newListForm = this.fb.group({
     name: ['', Validators.required],
@@ -92,6 +104,8 @@ export class App implements OnInit {
     address: [''],
     listId: [''] // To pre-select or allow choosing a list
   });
+
+  deletingIds = signal<Set<string>>(new Set());
 
   // --- Operational Utilities ---
   async performAction<T>(action: () => Promise<T>, options: { 
@@ -275,15 +289,15 @@ export class App implements OnInit {
   }
 
   addSelectedToList(listId: string) {
-    const selected = this.selectedSavedCompanies();
-    if (selected.length === 0) return;
+    const selectedArr = Array.from(this.selectedSavedCompanies());
+    if (selectedArr.length === 0) return;
 
     this.isMovingToList.set(true);
     
     const processBatch = async (index: number) => {
       const batchSize = 25;
-      const end = Math.min(index + batchSize, selected.length);
-      const batchIds = selected.slice(index, end);
+      const end = Math.min(index + batchSize, selectedArr.length);
+      const batchIds = selectedArr.slice(index, end);
       
       this.storageService.addCompaniesToList(listId, batchIds);
       
@@ -295,7 +309,7 @@ export class App implements OnInit {
         }
       });
 
-      if (end < selected.length) {
+      if (end < selectedArr.length) {
         // Continue with next batch
         setTimeout(() => processBatch(end), 10);
       } else {
@@ -303,7 +317,7 @@ export class App implements OnInit {
         this.clearBulkSelection();
         this.isMovingToList.set(false);
         this.isMoveToListMenuOpen.set(false);
-        this.storageService.addNotification('📦 Movimentação Concluída', `${selected.length} contactos foram movidos para a lista "${listName}".`, 'success');
+        this.storageService.addNotification('📦 Movimentação Concluída', `${selectedArr.length} contactos foram movidos para a lista "${listName}".`, 'success');
       }
     };
 
@@ -775,15 +789,18 @@ export class App implements OnInit {
 
   campaignStats = computed(() => {
     const campaigns = this.storageService.campaigns();
-    const sent = campaigns.filter(c => c.status === 'sent').length;
-    const scheduled = campaigns.filter(c => c.status === 'scheduled').length;
-    const failed = campaigns.filter(c => c.status === 'failed').length;
-    const opened = campaigns.filter(c => c.opened).length;
-    const total = campaigns.length;
+    const stats = { sent: 0, scheduled: 0, failed: 0, opened: 0, total: campaigns.length };
     
-    const openRate = sent > 0 ? Math.round((opened / sent) * 100) : 0;
+    for (const c of campaigns) {
+      if (c.status === 'sent') stats.sent++;
+      else if (c.status === 'scheduled') stats.scheduled++;
+      else if (c.status === 'failed') stats.failed++;
+      
+      if (c.opened) stats.opened++;
+    }
     
-    return { sent, scheduled, failed, opened, openRate, total };
+    const openRate = stats.sent > 0 ? Math.round((stats.opened / stats.sent) * 100) : 0;
+    return { ...stats, openRate };
   });
 
   allContactLists = computed(() => this.storageService.contactLists());
@@ -791,11 +808,12 @@ export class App implements OnInit {
   groupedCampaigns = computed(() => {
     const campaigns = this.storageService.campaigns();
     const groups = new Map<string, CompanyCampaignGroup>();
+    const savedMap = this.savedCompaniesMap();
 
-    campaigns.forEach(c => {
+    for (const c of campaigns) {
       if (!groups.has(c.companyId)) {
-        // Try to find company details in saved or history
-        const companyDetails = this.storageService.savedCompanies().find(comp => comp.id === c.companyId) || 
+        // Try to find company details in map (O(1))
+        const companyDetails = savedMap.get(c.companyId) || 
                                this.storageService.searchHistory().find(comp => comp.id === c.companyId);
 
         groups.set(c.companyId, {
@@ -821,15 +839,13 @@ export class App implements OnInit {
       if (activityDate > group.latestActivity) {
         group.latestActivity = activityDate;
       }
-    });
+    }
 
     return Array.from(groups.values()).map(group => {
       group.stats.openRate = group.stats.sent > 0 ? Math.round((group.stats.opened / group.stats.sent) * 100) : 0;
       
       group.campaigns.sort((a, b) => {
-        if (a.sequenceIndex && b.sequenceIndex) {
-          return a.sequenceIndex - b.sequenceIndex;
-        }
+        if (a.sequenceIndex && b.sequenceIndex) return a.sequenceIndex - b.sequenceIndex;
         const dateA = a.scheduledDate || a.sentDate || 0;
         const dateB = b.scheduledDate || b.sentDate || 0;
         return dateA - dateB;
@@ -902,37 +918,39 @@ export class App implements OnInit {
   historySortColumn = signal<'name' | 'province' | 'sector' | 'category' | null>(null);
   historySortDirection = signal<'asc' | 'desc'>('asc');
 
-  selectedSavedCompanies = signal<string[]>([]);
+  selectedSavedCompanies = signal<Set<string>>(new Set());
 
   toggleSavedCompanySelection(companyId: string) {
     this.selectedSavedCompanies.update(selected => {
-      if (selected.includes(companyId)) {
-        return selected.filter(id => id !== companyId);
+      const newSet = new Set(selected);
+      if (newSet.has(companyId)) {
+        newSet.delete(companyId);
       } else {
-        return [...selected, companyId];
+        newSet.add(companyId);
       }
+      return newSet;
     });
   }
 
   toggleAllSavedCompanies(event: Event) {
     const isChecked = (event.target as HTMLInputElement).checked;
     if (isChecked) {
-      this.selectedSavedCompanies.set(this.storageService.savedCompanies().map(c => c.id));
+      this.selectedSavedCompanies.set(new Set(this.storageService.savedCompanies().map(c => c.id)));
     } else {
-      this.selectedSavedCompanies.set([]);
+      this.selectedSavedCompanies.set(new Set());
     }
   }
 
   clearBulkSelection() {
-    this.selectedSavedCompanies.set([]);
+    this.selectedSavedCompanies.set(new Set());
   }
 
   openBulkEmailModal() {
-    if (this.selectedSavedCompanies().length === 0) return;
+    if (this.selectedSavedCompanies().size === 0) return;
     
     // For bulk mode, we use the first company as a template for generation,
     // but we set the bulk flag so the UI and sending logic know it's for multiple.
-    const firstCompanyId = this.selectedSavedCompanies()[0];
+    const firstCompanyId = Array.from(this.selectedSavedCompanies())[0];
     const company = this.storageService.savedCompanies().find(c => c.id === firstCompanyId);
     if (company) {
       this.isBulkEmailMode.set(true);
@@ -1043,6 +1061,47 @@ export class App implements OnInit {
 
   toggleCompanyExpansion(companyId: string) {
     this.expandedCompanyId.update(current => current === companyId ? null : companyId);
+  }
+
+  deleteCompletedCampaigns() {
+    if (confirm('Deseja eliminar todas as campanhas concluídas? Esta ação não pode ser revertida.')) {
+      this.storageService.removeCompletedCampaigns();
+      this.storageService.showToast('✅ Limpeza Concluída', 'Todas as campanhas concluídas foram removidas.', 'success');
+    }
+  }
+
+  deleteCampaignGroup(event: Event, companyId: string) {
+    event.stopPropagation(); // Prevent expansion when clicking delete
+    if (confirm('Deseja eliminar todas as campanhas desta empresa?')) {
+      this.deletingIds.update(set => new Set(set).add(companyId));
+      
+      // Delay to allow exit animation
+      setTimeout(() => {
+        this.storageService.removeCampaignGroup(companyId);
+        this.deletingIds.update(set => {
+          const next = new Set(set);
+          next.delete(companyId);
+          return next;
+        });
+        this.storageService.showToast('✅ Removido', 'As campanhas da empresa foram eliminadas.', 'success');
+      }, 300);
+    }
+  }
+
+  deleteSingleCampaign(campaignId: string) {
+    if (confirm('Deseja eliminar este email do histórico?')) {
+      this.deletingIds.update(set => new Set(set).add(campaignId));
+
+      setTimeout(() => {
+        this.storageService.removeCampaign(campaignId);
+        this.deletingIds.update(set => {
+          const next = new Set(set);
+          next.delete(campaignId);
+          return next;
+        });
+        this.storageService.showToast('✅ Removido', 'O email foi removido do histórico.', 'success');
+      }, 300);
+    }
   }
 
   getSocialIcon(platform: string): string {
@@ -1537,7 +1596,7 @@ export class App implements OnInit {
     const settings = this.storageService.emailSettings();
 
     if (this.isBulkEmailMode()) {
-      const companies = this.storageService.savedCompanies().filter(c => this.selectedSavedCompanies().includes(c.id));
+      const companies = this.storageService.savedCompanies().filter(c => this.selectedSavedCompanies().has(c.id));
       
       if (!settings) {
         this.storageService.addNotification('Configuração em Falta', 'Configure um provedor de email nas Configurações para enviar campanhas em massa.', 'error', 'high');
@@ -1693,7 +1752,7 @@ export class App implements OnInit {
     
     let companiesBase = [templateCompany];
     if (this.isBulkEmailMode()) {
-      companiesBase = this.storageService.savedCompanies().filter(c => this.selectedSavedCompanies().includes(c.id));
+      companiesBase = this.storageService.savedCompanies().filter(c => this.selectedSavedCompanies().has(c.id));
     }
 
     const processBatch = async (index: number) => {
@@ -1769,9 +1828,15 @@ export class App implements OnInit {
 
   // Performance helpers
   clearAllMemory() {
-    if (confirm('Deseja libertar memória eliminando registos antigos? Isto manterá as suas empresas e modelos, mas libertará espaço no historial e logs.')) {
-      this.storageService.clearOldData();
-      this.storageService.showToast('Memória Libertada', 'Os dados antigos foram removidos com sucesso.', 'success');
+    if (confirm('Deseja realizar uma limpeza PROFUNDA para libertar recursos? Isto eliminará registos de historial, logs e notificações antigas, mas manterá as suas empresas e modelos intactos.')) {
+      this.storageService.clearOldData(true);
+      
+      // Clear memory references in App
+      if (this.searchResults().length > 50) {
+        this.searchResults.set(this.searchResults().slice(0, 20));
+      }
+      
+      this.storageService.showToast('✅ Memória Libertada', 'Limpeza profunda concluída. O sistema deverá estar mais rápido agora.', 'success');
     }
   }
 }

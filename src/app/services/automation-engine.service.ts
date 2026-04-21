@@ -44,6 +44,7 @@ export class AutomationEngineService implements OnDestroy {
   public nodeInsertContext = signal<{steps: WorkflowNode[], index: number} | null>(null);
 
   public isPerformanceMode = signal<boolean>(false);
+  public isAutomationsPaused = signal<boolean>(false);
   
   public togglePerformanceMode() {
     this.isPerformanceMode.update(v => !v);
@@ -55,6 +56,17 @@ export class AutomationEngineService implements OnDestroy {
       this.storageService.addNotification('⚡ Modo Poupança Ativado', 'As automações em tempo real serão executadas com menos frequência para poupar recursos.', 'info');
     } else {
       this.storageService.addNotification('🚀 Modo Performance Ativado', 'O motor de automação voltou ao ritmo normal.', 'success');
+    }
+  }
+
+  public toggleAutomationPause() {
+    this.isAutomationsPaused.update(v => !v);
+    if (this.isAutomationsPaused()) {
+      this.stopTicker();
+      this.storageService.addNotification('⏸️ Automações Pausadas', 'Todas as tarefas em tempo real foram interrompidas.', 'warning');
+    } else {
+      this.startTicker();
+      this.storageService.addNotification('▶️ Automações Resumidas', 'As tarefas em tempo real voltaram a ser executadas.', 'success');
     }
   }
 
@@ -316,7 +328,7 @@ export class AutomationEngineService implements OnDestroy {
   }
 
   private startTicker() {
-    if (this.intervalId) return;
+    if (this.intervalId || this.isAutomationsPaused()) return;
     const interval = this.isPerformanceMode() ? 300000 : 60000; // 5 min vs 1 min
     this.intervalId = setInterval(() => this.tick(), interval);
     // Initial tick after a short delay
@@ -563,10 +575,10 @@ export class AutomationEngineService implements OnDestroy {
 
   private isTicking = false;
   private async tick() {
-    if (this.isTicking) return;
+    if (this.isTicking || this.isAutomationsPaused()) return;
     
     // Stop automation if tab is hidden to save resources, unless specifically running a heavy background task
-    if (typeof document !== 'undefined' && document.hidden) {
+    if (typeof document !== 'undefined' && document.hidden && !this.isPerformanceMode()) {
       return;
     }
 
